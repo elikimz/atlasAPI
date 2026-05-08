@@ -2,7 +2,7 @@ import ssl
 from app.config import settings
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 # Load environment variables
 DATABASE_URL = settings.DATABASE_URL
