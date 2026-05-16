@@ -3,6 +3,7 @@ from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
 import os
+from sqlalchemy import select
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -99,24 +100,34 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
     user = await db.execute(select(models.User).filter(models.User.email == otp_request.email))
     user = user.scalar_one_or_none()
+
     if not user:
-        # Create user if not exists
         user = models.User(email=otp_request.email)
         db.add(user)
         await db.commit()
         await db.refresh(user)
 
-    # Generate OTP (for now, a simple fixed code for testing)
     import random
-otp_code = str(random.randint(100000, 999999)) # Generate a random 6-digit OTP
-    expires_at = datetime.utcnow() + timedelta(minutes=10) # OTP valid for 10 minutes
+    otp_code = str(random.randint(100000, 999999))
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
 
-    otp_entry = models.OTP(email=otp_request.email, otp_code=otp_code, expires_at=expires_at)
+    otp_entry = models.OTP(
+        email=otp_request.email,
+        otp_code=otp_code,
+        expires_at=expires_at
+    )
+
     db.add(otp_entry)
     await db.commit()
 
-        await send_email(otp_request.email, "Your OTP for Atlas Capture", f"Your verification code is: {otp_code}")
+    await send_email(
+        otp_request.email,
+        "Your OTP for Atlas Capture",
+        f"Your verification code is: {otp_code}"
+    )
+
     return {"message": "OTP sent to email"}
+
 
 @router.post("/auth/verify", response_model=Token)
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
@@ -146,7 +157,7 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-from sqlalchemy import select
+
 
 @router.get("/auth/me", response_model=UserInDB)
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
