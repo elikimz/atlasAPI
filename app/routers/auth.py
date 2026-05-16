@@ -123,7 +123,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
 
     await send_email(
         otp_request.email,
-        "Your OTP for Atlas Capture",
+        "Your OTP for Adpulse Capture",
         f"Your verification code is: {otp_code}"
     )
 

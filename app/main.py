@@ -22,5 +22,5 @@ app.include_router(extra.router)
 
 @app.get("/")
 def root():
-    return {"message": "Atlas API is running 🚀"}
+    return {"message": "Adpulse API is running 🚀"}
     

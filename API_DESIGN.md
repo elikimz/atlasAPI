@@ -1,6 +1,6 @@
 # API Design for Generic Task Management Platform
 
-This document outlines the API design for a generic task management platform, inspired by the visual layout and user flow of the Atlas Capture application. The goal is to create a functional backend that supports the observed UI elements and interactions, while maintaining a generic and distinct implementation.
+This document outlines the API design for a generic task management platform, inspired by the visual layout and user flow of the Adpulse Capture application. The goal is to create a functional backend that supports the observed UI elements and interactions, while maintaining a generic and distinct implementation.
 
 ## 1. Authentication API
 
