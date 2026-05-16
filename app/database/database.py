@@ -6,7 +6,10 @@ from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
 # Load environment variables
 DATABASE_URL = settings.DATABASE_URL
-assert DATABASE_URL is not None, "❌ DATABASE_URL not loaded from .env"
+
+if not DATABASE_URL:
+    # In production, ensure DATABASE_URL is set in environment variables
+    print("⚠️ WARNING: DATABASE_URL not found in environment variables.")
 
 # --- SSL Context (optional for cloud DBs like Supabase or PlanetScale) ---
 ssl_context = ssl.create_default_context()
