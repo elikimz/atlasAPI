@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_async_db
 from app.models import models
+import random
 
 router = APIRouter()
 
@@ -107,7 +108,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         await db.commit()
         await db.refresh(user)
 
-    import random
+   
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.utcnow() + timedelta(minutes=10)
 
