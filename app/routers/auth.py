@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import smtplib
+from email.mime.text import MIMEText
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +14,27 @@ from app.database.database import get_async_db
 from app.models import models
 
 router = APIRouter()
+
+# Email configuration
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER", "elijahkimani1293@gmail.com")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "cgxmrmncbazlwyzy")
+
+async def send_email(to_email: str, subject: str, body: str):
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_SENDER
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+            server.send_message(msg)
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email")
 
 # Configuration for JWT
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -84,13 +107,15 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         await db.refresh(user)
 
     # Generate OTP (for now, a simple fixed code for testing)
-    otp_code = "123456" # In a real app, this would be a random code sent via email
+    import random
+otp_code = str(random.randint(100000, 999999)) # Generate a random 6-digit OTP
     expires_at = datetime.utcnow() + timedelta(minutes=10) # OTP valid for 10 minutes
 
     otp_entry = models.OTP(email=otp_request.email, otp_code=otp_code, expires_at=expires_at)
     db.add(otp_entry)
     await db.commit()
 
+        await send_email(otp_request.email, "Your OTP for Atlas Capture", f"Your verification code is: {otp_code}")
     return {"message": "OTP sent to email"}
 
 @router.post("/auth/verify", response_model=Token)
