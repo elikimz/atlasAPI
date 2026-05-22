@@ -79,9 +79,10 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         user_video_task.status = "completed"
         user_video_task.completed_at = datetime.now(timezone.utc)
 
-    # Update balance
-    current_user.withdrawal_wallet_balance += video_task.reward_amount
-
+    # Update balance safely (only if column exists in DB)
+    if hasattr(current_user, "withdrawal_wallet_balance"):
+        current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) + video_task.reward_amount
+    
     await db.commit()
     await db.refresh(current_user)
     await db.refresh(user_video_task)

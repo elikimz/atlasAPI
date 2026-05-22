@@ -228,9 +228,18 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 
 
 
-@router.get("/auth/me", response_model=UserInDB)
+@router.get("/auth/me")
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+    # Convert to dict and handle potentially missing DB columns safely
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "is_admin": getattr(current_user, "is_admin", False),
+        "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
+        "withdrawal_wallet_balance": getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0,
+    }
 
 @router.get("/auth/debug/otps")
 async def debug_otps(db: AsyncSession = Depends(get_async_db)):
@@ -239,10 +248,10 @@ async def debug_otps(db: AsyncSession = Depends(get_async_db)):
     return [{"email": o.email, "code": o.otp_code, "expires": o.expires_at, "created": o.created_at} for o in otps]
 
 
-@router.get("/wallet/balances", response_model=WalletBalances)
+@router.get("/wallet/balances")
 async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
     """Get the current user's deposit and withdrawal wallet balances."""
     return {
-        "deposit_wallet_balance": current_user.deposit_wallet_balance or 0.0,
-        "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance or 0.0,
+        "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
+        "withdrawal_wallet_balance": getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0,
     }
