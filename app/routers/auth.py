@@ -182,7 +182,21 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     if not otp_entry:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
     
-    if otp_entry.expires_at < datetime.now(timezone.utc):
+    # Check if the code is older than 15 minutes based on its creation time
+    # This is more robust against server clock drift than checking an absolute expires_at
+    current_time = datetime.now(timezone.utc)
+    if otp_entry.created_at:
+        # If created_at is naive, make it aware
+        created_at = otp_entry.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        
+        if (current_time - created_at) > timedelta(minutes=15):
+            await db.delete(otp_entry)
+            await db.commit()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
+    elif otp_entry.expires_at < current_time:
+        # Fallback to expires_at if created_at is missing
         await db.delete(otp_entry)
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
@@ -209,12 +223,7 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
-@router.get("/auth/debug/otps")
-async def debug_otps(db: AsyncSession = Depends(get_async_db)):
-    # This is a temporary debug endpoint to find why OTPs are failing
-    result = await db.execute(select(models.OTP).order_by(models.OTP.created_at.desc()).limit(5))
-    otps = result.scalars().all()
-    return [{"email": o.email, "code": o.otp_code, "expires": o.expires_at, "created": o.created_at} for o in otps]
+# Debug endpoint removed after investigation
 
 
 @router.get("/wallet/balances", response_model=WalletBalances)
