@@ -92,18 +92,17 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
     
     # --- Multi-Tier Referral Rebates ---
     # Tier A: 10%, Tier B: 4%, Tier C: 1%
-    rebate_config = [
-        ("A", 0.10),
-        ("B", 0.04),
-        ("C", 0.01)
-    ]
+    rebate_config = [("A", 0.10), ("B", 0.04), ("C", 0.01)]
     
-    current_referrer_id = getattr(current_user, "referred_by_id", None)
+    # Fetch referrer from the new ReferralRelationship table
+    rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == current_user.id))
+    rel = rel_result.scalar_one_or_none()
+    current_referrer_id = rel.referrer_id if rel else None
+    
     for tier_label, percentage in rebate_config:
         if not current_referrer_id:
             break
             
-        # Fetch the referrer
         referrer_result = await db.execute(select(models.User).filter(models.User.id == current_referrer_id))
         referrer = referrer_result.scalar_one_or_none()
         
@@ -115,18 +114,17 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
                 ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
                 setattr(referrer, "withdrawal_wallet_balance", ref_balance + rebate_amount)
             
-            # 2. Update referral code stats for tracking (find the code they used)
-            # We look for any code owned by this referrer
-            code_result = await db.execute(
-                select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1)
-            )
+            # 2. Update referral code stats
+            code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1))
             ref_code = code_result.scalar_one_or_none()
             if ref_code:
                 current_rebate_total = getattr(ref_code, "task_rebate_amount", 0.0) or 0.0
                 setattr(ref_code, "task_rebate_amount", current_rebate_total + rebate_amount)
             
-            # Move to the next level up the chain
-            current_referrer_id = getattr(referrer, "referred_by_id", None)
+            # Move up the chain using the relationship table
+            next_rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == referrer.id))
+            next_rel = next_rel_result.scalar_one_or_none()
+            current_referrer_id = next_rel.referrer_id if next_rel else None
         else:
             break
     

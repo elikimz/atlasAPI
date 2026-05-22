@@ -88,8 +88,12 @@ async def get_active_referrals(
         )
         return "Completed" if task_result.scalars().first() else "Awaiting Task"
 
-    # Tier A: Direct referrals
-    result_a = await db.execute(select(models.User).filter(models.User.referred_by_id == current_user.id))
+    # Tier A: Direct referrals (users referred by current_user)
+    result_a = await db.execute(
+        select(models.User)
+        .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+        .filter(models.ReferralRelationship.referrer_id == current_user.id)
+    )
     tier_a_users = result_a.scalars().all()
     
     for u in tier_a_users:
@@ -97,14 +101,22 @@ async def get_active_referrals(
         invited_users.append({"name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), "status": status, "tier": "A"})
         
         # Tier B: Referrals of Tier A
-        result_b = await db.execute(select(models.User).filter(models.User.referred_by_id == u.id))
+        result_b = await db.execute(
+            select(models.User)
+            .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+            .filter(models.ReferralRelationship.referrer_id == u.id)
+        )
         tier_b_users = result_b.scalars().all()
         for ub in tier_b_users:
             status_b = await get_user_status(ub.id)
             invited_users.append({"name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), "status": status_b, "tier": "B"})
             
             # Tier C: Referrals of Tier B
-            result_c = await db.execute(select(models.User).filter(models.User.referred_by_id == ub.id))
+            result_c = await db.execute(
+                select(models.User)
+                .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+                .filter(models.ReferralRelationship.referrer_id == ub.id)
+            )
             tier_c_users = result_c.scalars().all()
             for uc in tier_c_users:
                 status_c = await get_user_status(uc.id)
@@ -278,7 +290,11 @@ async def purchase_plan(
     
     # 5. --- Multi-Tier Referral Commission (10% / 4% / 1%) ---
     commission_config = [("A", 0.10), ("B", 0.04), ("C", 0.01)]
-    current_referrer_id = current_user.referred_by_id
+    
+    # Fetch initial referrer
+    rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == current_user.id))
+    rel = rel_result.scalar_one_or_none()
+    current_referrer_id = rel.referrer_id if rel else None
     
     for tier, percentage in commission_config:
         if not current_referrer_id:
@@ -291,20 +307,21 @@ async def purchase_plan(
             commission_amount = plan.price * percentage
             
             # Credit to referrer's withdrawal wallet
-            ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
-            setattr(referrer, "withdrawal_wallet_balance", ref_balance + commission_amount)
+            if hasattr(referrer, "withdrawal_wallet_balance"):
+                ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
+                setattr(referrer, "withdrawal_wallet_balance", ref_balance + commission_amount)
             
             # Update referral code stats
-            code_result = await db.execute(
-                select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1)
-            )
+            code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1))
             ref_code = code_result.scalar_one_or_none()
             if ref_code:
                 current_earned = getattr(ref_code, "earned_amount", 0.0) or 0.0
                 setattr(ref_code, "earned_amount", current_earned + commission_amount)
             
-            # Move up the chain
-            current_referrer_id = referrer.referred_by_id
+            # Move up the chain using the relationship table
+            next_rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == referrer.id))
+            next_rel = next_rel_result.scalar_one_or_none()
+            current_referrer_id = next_rel.referrer_id if next_rel else None
         else:
             break
             

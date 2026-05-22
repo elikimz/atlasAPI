@@ -72,6 +72,18 @@ class ReferralCode(Base):
 
     user = relationship("User", back_populates="referral_codes")
 
+class ReferralRelationship(Base):
+    __tablename__ = "referral_relationships"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    referrer_id = Column(Integer, ForeignKey("users.id"))
+    referral_code_used = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", foreign_keys=[user_id])
+    referrer = relationship("User", foreign_keys=[referrer_id])
+
 class Payment(Base):
     __tablename__ = "payments"
 
