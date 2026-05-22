@@ -134,22 +134,26 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
 
         # If a referral code was provided, look it up and record the signup
         if otp_request.referral_code:
-            referral_result = await db.execute(
-                select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
-            )
-            referral = referral_result.scalar_one_or_none()
-            if referral:
-                # 1. Create a record in the new ReferralRelationship table
-                relationship = models.ReferralRelationship(
-                    user_id=user.id,
-                    referrer_id=referral.user_id,
-                    referral_code_used=otp_request.referral_code.strip()
+            try:
+                referral_result = await db.execute(
+                    select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
                 )
-                db.add(relationship)
-                
-                # 2. Increment signup count on the code
-                referral.signups_count = (referral.signups_count or 0) + 1
-                await db.commit()
+                referral = referral_result.scalar_one_or_none()
+                if referral:
+                    # 1. Create a record in the new ReferralRelationship table
+                    relationship = models.ReferralRelationship(
+                        user_id=user.id,
+                        referrer_id=referral.user_id,
+                        referral_code_used=otp_request.referral_code.strip()
+                    )
+                    db.add(relationship)
+                    
+                    # 2. Increment signup count on the code
+                    referral.signups_count = (referral.signups_count or 0) + 1
+                    await db.commit()
+            except Exception as e:
+                print(f"Safe Referral Error: {e}")
+                await db.rollback()
     else:
         # Returning user: update name fields if they were previously empty
         if otp_request.first_name and not user.first_name:
@@ -161,21 +165,25 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         await db.commit()
 
     # --- Auto-generate Referral Code for user if they don't have one ---
-    code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
-    if not code_check.scalar_one_or_none():
-        import string
-        # Generate a random 8-character code (uppercase letters and digits)
-        random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        # Ensure it's unique
-        while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
+    try:
+        code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
+        if not code_check.scalar_one_or_none():
+            import string
+            # Generate a random 8-character code (uppercase letters and digits)
             random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            
-        new_code = models.ReferralCode(
-            user_id=user.id,
-            code=random_code
-        )
-        db.add(new_code)
-        await db.commit()
+            # Ensure it's unique
+            while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
+                random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                
+            new_code = models.ReferralCode(
+                user_id=user.id,
+                code=random_code
+            )
+            db.add(new_code)
+            await db.commit()
+    except Exception as e:
+        print(f"Safe Code Gen Error: {e}")
+        await db.rollback()
 
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -262,11 +270,15 @@ async def calculate_dynamic_withdrawal_balance(user_id: int, db: AsyncSession) -
     task_earnings = task_result.scalar() or 0.0
     
     # 2. Sum referral rebates (stored on ReferralCode for this user)
-    code_result = await db.execute(
-        select(func.sum(models.ReferralCode.earned_amount + models.ReferralCode.task_rebate_amount))
-        .filter(models.ReferralCode.user_id == user_id)
-    )
-    referral_earnings = code_result.scalar() or 0.0
+    referral_earnings = 0.0
+    try:
+        code_result = await db.execute(
+            select(func.sum(models.ReferralCode.earned_amount + models.ReferralCode.task_rebate_amount))
+            .filter(models.ReferralCode.user_id == user_id)
+        )
+        referral_earnings = code_result.scalar() or 0.0
+    except Exception as e:
+        print(f"Safe Balance Calc Error: {e}")
     
     return float(task_earnings + referral_earnings)
 

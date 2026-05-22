@@ -56,20 +56,24 @@ async def get_referral_summary(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    result = await db.execute(
-        select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
-    )
-    codes = result.scalars().all()
-    
-    total_earnings = sum(c.earned_amount for c in codes)
-    total_signups = sum(c.signups_count for c in codes)
-    total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
-    
-    return {
-        "earnings": total_earnings,
-        "users_referred": total_signups,
-        "task_rebate": total_task_rebate
-    }
+    try:
+        result = await db.execute(
+            select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+        )
+        codes = result.scalars().all()
+        
+        total_earnings = sum(getattr(c, "earned_amount", 0.0) or 0.0 for c in codes)
+        total_signups = sum(getattr(c, "signups_count", 0) or 0 for c in codes)
+        total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
+        
+        return {
+            "earnings": total_earnings,
+            "users_referred": total_signups,
+            "task_rebate": total_task_rebate
+        }
+    except Exception as e:
+        print(f"Safe Referral Summary Error: {e}")
+        return {"earnings": 0.0, "users_referred": 0, "task_rebate": 0.0}
 
 @router.get("/referrals/active", response_model=List[InvitedUser])
 async def get_active_referrals(
@@ -78,49 +82,52 @@ async def get_active_referrals(
 ):
     invited_users = []
     
-    # Helper to get status for a user
-    async def get_user_status(user_id):
-        task_result = await db.execute(
-            select(models.UserVideoTask).filter(
-                models.UserVideoTask.user_id == user_id,
-                models.UserVideoTask.status == "completed"
+    try:
+        # Helper to get status for a user
+        async def get_user_status(user_id):
+            task_result = await db.execute(
+                select(models.UserVideoTask).filter(
+                    models.UserVideoTask.user_id == user_id,
+                    models.UserVideoTask.status == "completed"
+                )
             )
-        )
-        return "Completed" if task_result.scalars().first() else "Awaiting Task"
+            return "Completed" if task_result.scalars().first() else "Awaiting Task"
 
-    # Tier A: Direct referrals (users referred by current_user)
-    result_a = await db.execute(
-        select(models.User)
-        .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-        .filter(models.ReferralRelationship.referrer_id == current_user.id)
-    )
-    tier_a_users = result_a.scalars().all()
-    
-    for u in tier_a_users:
-        status = await get_user_status(u.id)
-        invited_users.append({"name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), "status": status, "tier": "A"})
-        
-        # Tier B: Referrals of Tier A
-        result_b = await db.execute(
+        # Tier A: Direct referrals (users referred by current_user)
+        result_a = await db.execute(
             select(models.User)
             .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-            .filter(models.ReferralRelationship.referrer_id == u.id)
+            .filter(models.ReferralRelationship.referrer_id == current_user.id)
         )
-        tier_b_users = result_b.scalars().all()
-        for ub in tier_b_users:
-            status_b = await get_user_status(ub.id)
-            invited_users.append({"name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), "status": status_b, "tier": "B"})
+        tier_a_users = result_a.scalars().all()
+        
+        for u in tier_a_users:
+            status = await get_user_status(u.id)
+            invited_users.append({"name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), "status": status, "tier": "A"})
             
-            # Tier C: Referrals of Tier B
-            result_c = await db.execute(
+            # Tier B: Referrals of Tier A
+            result_b = await db.execute(
                 select(models.User)
                 .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-                .filter(models.ReferralRelationship.referrer_id == ub.id)
+                .filter(models.ReferralRelationship.referrer_id == u.id)
             )
-            tier_c_users = result_c.scalars().all()
-            for uc in tier_c_users:
-                status_c = await get_user_status(uc.id)
-                invited_users.append({"name": f"{uc.first_name or 'User'} {uc.last_name or ''}".strip(), "status": status_c, "tier": "C"})
+            tier_b_users = result_b.scalars().all()
+            for ub in tier_b_users:
+                status_b = await get_user_status(ub.id)
+                invited_users.append({"name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), "status": status_b, "tier": "B"})
+                
+                # Tier C: Referrals of Tier B
+                result_c = await db.execute(
+                    select(models.User)
+                    .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+                    .filter(models.ReferralRelationship.referrer_id == ub.id)
+                )
+                tier_c_users = result_c.scalars().all()
+                for uc in tier_c_users:
+                    status_c = await get_user_status(uc.id)
+                    invited_users.append({"name": f"{uc.first_name or 'User'} {uc.last_name or ''}".strip(), "status": status_c, "tier": "C"})
+    except Exception as e:
+        print(f"Safe Active Referrals Error: {e}")
         
     return invited_users
 
@@ -129,17 +136,21 @@ async def get_referral_codes(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    result = await db.execute(
-        select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
-    )
-    codes = result.scalars().all()
-    return [{
-        "code": c.code, 
-        "signups": c.signups_count, 
-        "trained": c.trained_count, 
-        "earned": c.earned_amount,
-        "task_rebate": getattr(c, "task_rebate_amount", 0.0) or 0.0
-    } for c in codes]
+    try:
+        result = await db.execute(
+            select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+        )
+        codes = result.scalars().all()
+        return [{
+            "code": c.code, 
+            "signups": getattr(c, "signups_count", 0) or 0, 
+            "trained": getattr(c, "trained_count", 0) or 0, 
+            "earned": getattr(c, "earned_amount", 0.0) or 0.0,
+            "task_rebate": getattr(c, "task_rebate_amount", 0.0) or 0.0
+        } for c in codes]
+    except Exception as e:
+        print(f"Safe Referral Codes Error: {e}")
+        return []
 
 @router.post("/referrals/codes", response_model=ReferralCodeSchema)
 async def create_referral_code(
