@@ -148,6 +148,8 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
+    # Ensure code is clean string
+    otp_code = otp_code.strip()
     otp_entry = models.OTP(
         email=email,
         otp_code=otp_code,
@@ -169,10 +171,11 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
 @router.post("/auth/verify", response_model=Token)
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
     email = otp_verify.email.strip().lower()
+    clean_otp = otp_verify.otp_code.strip()
     # Check if OTP exists at all for this email and code
     otp_result = await db.execute(select(models.OTP).filter(
         models.OTP.email == email,
-        models.OTP.otp_code == otp_verify.otp_code
+        models.OTP.otp_code == clean_otp
     ))
     otp_entry = otp_result.scalar_one_or_none()
 
@@ -205,6 +208,13 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 @router.get("/auth/me", response_model=UserInDB)
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+@router.get("/auth/debug/otps")
+async def debug_otps(db: AsyncSession = Depends(get_async_db)):
+    # This is a temporary debug endpoint to find why OTPs are failing
+    result = await db.execute(select(models.OTP).order_by(models.OTP.created_at.desc()).limit(5))
+    otps = result.scalars().all()
+    return [{"email": o.email, "code": o.otp_code, "expires": o.expires_at, "created": o.created_at} for o in otps]
 
 
 @router.get("/wallet/balances", response_model=WalletBalances)
