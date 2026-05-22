@@ -45,11 +45,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
-class UserCreate(BaseModel):
-    email: str
-
 class OTPRequest(BaseModel):
+    first_name: str
+    last_name: str
     email: str
+    referral_code: Optional[str] = None
 
 class OTPVerify(BaseModel):
     email: str
@@ -99,16 +99,37 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/auth/login", response_model=dict)
 async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
-    user = await db.execute(select(models.User).filter(models.User.email == otp_request.email))
-    user = user.scalar_one_or_none()
+    user_result = await db.execute(select(models.User).filter(models.User.email == otp_request.email))
+    user = user_result.scalar_one_or_none()
 
     if not user:
-        user = models.User(email=otp_request.email)
+        # New user: create with provided details
+        user = models.User(
+            email=otp_request.email,
+            first_name=otp_request.first_name,
+            last_name=otp_request.last_name,
+        )
         db.add(user)
         await db.commit()
         await db.refresh(user)
 
-   
+        # If a referral code was provided, look it up and record the signup
+        if otp_request.referral_code:
+            referral_result = await db.execute(
+                select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code)
+            )
+            referral = referral_result.scalar_one_or_none()
+            if referral:
+                referral.signups_count = (referral.signups_count or 0) + 1
+                await db.commit()
+    else:
+        # Returning user: update name fields if they were previously empty
+        if otp_request.first_name and not user.first_name:
+            user.first_name = otp_request.first_name
+        if otp_request.last_name and not user.last_name:
+            user.last_name = otp_request.last_name
+        await db.commit()
+
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.utcnow() + timedelta(minutes=10)
 
