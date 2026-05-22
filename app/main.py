@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import auth, core, extra
+from app.routers import auth, core, extra, admin
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
@@ -18,6 +18,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(core.router)
 app.include_router(extra.router)
+app.include_router(admin.router)
 
 
 @app.get("/")

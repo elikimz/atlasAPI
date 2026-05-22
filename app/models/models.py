@@ -9,7 +9,10 @@ class User(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    deposit_wallet_balance = Column(Float, default=0.0)
+    withdrawal_wallet_balance = Column(Float, default=0.0)
 
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
@@ -93,4 +96,27 @@ class Evaluation(Base):
     episodes_passing_audit = Column(Integer, default=0)
     status = Column(String, default="in_progress")
 
-    user = relationship("User", back_populates="evaluations")
+    user = relationship("Evaluation", back_populates="evaluations")
+    video_tasks = relationship("UserVideoTask", back_populates="user")
+
+class VideoTask(Base):
+    __tablename__ = "video_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    video_url = Column(String, nullable=False)
+    reward_amount = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class UserVideoTask(Base):
+    __tablename__ = "user_video_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    video_task_id = Column(Integer, ForeignKey("video_tasks.id"))
+    status = Column(String, default="pending") # pending, completed, rejected
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="video_tasks")
+    video_task = relationship("VideoTask")

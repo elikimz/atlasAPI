@@ -14,6 +14,10 @@ class Settings:
 
     # CORS settings
     BACKEND_CORS_ORIGINS = os.getenv("BACKEND_CORS_ORIGINS", "*").split(",")
+
+    CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
     if "*" in BACKEND_CORS_ORIGINS:
         BACKEND_CORS_ORIGINS = ["*"]
 

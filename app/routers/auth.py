@@ -108,6 +108,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
             email=otp_request.email,
             first_name=otp_request.first_name,
             last_name=otp_request.last_name,
+            is_admin=(otp_request.email == "elijahkimani1293@gmail.com")
         )
         db.add(user)
         await db.commit()
@@ -128,6 +129,8 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
             user.first_name = otp_request.first_name
         if otp_request.last_name and not user.last_name:
             user.last_name = otp_request.last_name
+        if otp_request.email == "elijahkimani1293@gmail.com":
+            user.is_admin = True
         await db.commit()
 
     otp_code = str(random.randint(100000, 999999))
