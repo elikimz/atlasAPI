@@ -157,7 +157,20 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     )
 
     db.add(otp_entry)
-    await db.commit()
+    try:
+        await db.commit()
+        await db.refresh(otp_entry)
+        
+        # Verify it's actually in the DB after commit
+        verify_stmt = await db.execute(select(models.OTP).filter(models.OTP.id == otp_entry.id))
+        verify_entry = verify_stmt.scalar_one_or_none()
+        
+        if not verify_entry:
+            return {"message": "OTP generated but DB verification failed", "debug_code": otp_code}
+            
+    except Exception as e:
+        await db.rollback()
+        return {"message": f"DB Error: {str(e)}", "debug_code": otp_code}
 
     await send_email(
         email,
@@ -165,7 +178,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         f"Your verification code is: {otp_code}"
     )
 
-    return {"message": "OTP sent to email"}
+    return {"message": "OTP sent to email", "debug_status": "Success", "id": otp_entry.id}
 
 
 @router.post("/auth/verify", response_model=Token)
