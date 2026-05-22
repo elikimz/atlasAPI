@@ -14,28 +14,34 @@ router = APIRouter()
 
 # --- Task Endpoints ---
 
-@router.get("/tasks/available", response_model=List[AvailableTask])
+@router.get("/tasks/available")
 async def get_available_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
     # Fetch all video tasks
     result = await db.execute(select(models.VideoTask))
     all_video_tasks = result.scalars().all()
 
-    # Fetch tasks already completed by the current user
-    # Note: Using select here instead of accessing relationship directly for async safety
+    # Fetch tasks status for the current user
     uvt_result = await db.execute(
         select(models.UserVideoTask).filter(
-            models.UserVideoTask.user_id == current_user.id,
-            models.UserVideoTask.status == "completed"
+            models.UserVideoTask.user_id == current_user.id
         )
     )
-    completed_task_ids = [uvt.video_task_id for uvt in uvt_result.scalars().all()]
+    user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
 
-    # Filter out tasks already completed by the user
-    available_tasks = [
-        task for task in all_video_tasks if task.id not in completed_task_ids
-    ]
+    # Return all tasks with their status
+    response = []
+    for task in all_video_tasks:
+        status = user_tasks.get(task.id, "available")
+        response.append({
+            "id": task.id,
+            "title": task.title,
+            "description": task.description,
+            "video_url": task.video_url,
+            "reward_amount": task.reward_amount,
+            "status": status
+        })
 
-    return available_tasks
+    return response
 
 @router.get("/tasks/all", response_model=List[AvailableTask])
 async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):

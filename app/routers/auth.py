@@ -228,8 +228,8 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
 @router.get("/wallet/balances")
 async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
     """Get the current user's deposit and withdrawal wallet balances."""
-    # Hardcoded fallback to ensure zero-crash UI while DB columns are missing
+    # Use getattr to safely handle missing DB columns without crashing
     return {
-        "deposit_wallet_balance": 0.0,
-        "withdrawal_wallet_balance": 0.0,
+        "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
+        "withdrawal_wallet_balance": getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0,
     }
