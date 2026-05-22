@@ -161,3 +161,14 @@ class UserVideoTask(UserVideoTaskBase):
 
     class Config:
         orm_mode = True
+
+class AvailableTask(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    video_url: str
+    reward_amount: float
+
+class UserTaskCompletion(BaseModel):
+    video_task_id: int
+
