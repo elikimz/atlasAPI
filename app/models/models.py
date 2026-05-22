@@ -128,3 +128,28 @@ class UserVideoTask(Base):
 
     user = relationship("User", back_populates="video_tasks")
     video_task = relationship("VideoTask")
+
+class InvestmentPlan(Base):
+    __tablename__ = "investment_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    daily_tasks_limit = Column(Integer, default=5)
+    validity_days = Column(Integer, default=30)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+class UserPlan(Base):
+    __tablename__ = "user_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    plan_id = Column(Integer, ForeignKey("investment_plans.id"))
+    purchase_price = Column(Float, nullable=False)
+    purchased_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String, default="active") # active, expired
+
+    user = relationship("User", backref="plans")
+    plan = relationship("InvestmentPlan")

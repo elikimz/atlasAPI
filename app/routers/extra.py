@@ -76,32 +76,39 @@ async def get_active_referrals(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # This is a simplified multi-tier fetch (Tier A only for now as a base)
-    # Tier A: Direct referrals
-    result = await db.execute(
-        select(models.User).filter(models.User.referred_by_id == current_user.id)
-    )
-    tier_a_users = result.scalars().all()
-    
     invited_users = []
-    for u in tier_a_users:
-        # Determine status based on task completion or sign up
-        # If they have completed any video tasks, they are "Completed"
+    
+    # Helper to get status for a user
+    async def get_user_status(user_id):
         task_result = await db.execute(
             select(models.UserVideoTask).filter(
-                models.UserVideoTask.user_id == u.id,
+                models.UserVideoTask.user_id == user_id,
                 models.UserVideoTask.status == "completed"
             )
         )
-        has_completed_tasks = task_result.scalar_one_or_none() is not None
+        return "Completed" if task_result.scalars().first() else "Awaiting Task"
+
+    # Tier A: Direct referrals
+    result_a = await db.execute(select(models.User).filter(models.User.referred_by_id == current_user.id))
+    tier_a_users = result_a.scalars().all()
+    
+    for u in tier_a_users:
+        status = await get_user_status(u.id)
+        invited_users.append({"name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), "status": status, "tier": "A"})
         
-        status_text = "Completed" if has_completed_tasks else "Awaiting Task"
-        
-        invited_users.append({
-            "name": f"{u.first_name or 'User'} {u.last_name or u.id}",
-            "status": status_text,
-            "tier": "A"
-        })
+        # Tier B: Referrals of Tier A
+        result_b = await db.execute(select(models.User).filter(models.User.referred_by_id == u.id))
+        tier_b_users = result_b.scalars().all()
+        for ub in tier_b_users:
+            status_b = await get_user_status(ub.id)
+            invited_users.append({"name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), "status": status_b, "tier": "B"})
+            
+            # Tier C: Referrals of Tier B
+            result_c = await db.execute(select(models.User).filter(models.User.referred_by_id == ub.id))
+            tier_c_users = result_c.scalars().all()
+            for uc in tier_c_users:
+                status_c = await get_user_status(uc.id)
+                invited_users.append({"name": f"{uc.first_name or 'User'} {uc.last_name or ''}".strip(), "status": status_c, "tier": "C"})
         
     return invited_users
 
@@ -220,6 +227,89 @@ async def get_evaluations(
             "episodes_passing_audit": f"{e.episodes_passing_audit}/0"
         } for e in evals
     ]
+
+# --- Investment Plans ---
+class PlanPurchase(BaseModel):
+    plan_id: int
+
+@router.get("/plans", response_model=List[dict])
+async def get_plans(db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(select(models.InvestmentPlan).filter(models.InvestmentPlan.is_active == True))
+    plans = result.scalars().all()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "price": p.price,
+            "daily_tasks_limit": p.daily_tasks_limit,
+            "validity_days": p.validity_days,
+            "description": p.description
+        } for p in plans
+    ]
+
+@router.post("/plans/purchase", response_model=dict)
+async def purchase_plan(
+    purchase: PlanPurchase,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # 1. Fetch the plan
+    plan_result = await db.execute(select(models.InvestmentPlan).filter(models.InvestmentPlan.id == purchase.plan_id))
+    plan = plan_result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+        
+    # 2. Check if user has enough balance in deposit wallet
+    current_deposit = getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0
+    if current_deposit < plan.price:
+        raise HTTPException(status_code=400, detail="Insufficient deposit wallet balance")
+        
+    # 3. Deduct from deposit wallet
+    setattr(current_user, "deposit_wallet_balance", current_deposit - plan.price)
+    
+    # 4. Create UserPlan record
+    new_user_plan = models.UserPlan(
+        user_id=current_user.id,
+        plan_id=plan.id,
+        purchase_price=plan.price,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=plan.validity_days)
+    )
+    db.add(new_user_plan)
+    
+    # 5. --- Multi-Tier Referral Commission (10% / 4% / 1%) ---
+    commission_config = [("A", 0.10), ("B", 0.04), ("C", 0.01)]
+    current_referrer_id = current_user.referred_by_id
+    
+    for tier, percentage in commission_config:
+        if not current_referrer_id:
+            break
+            
+        referrer_result = await db.execute(select(models.User).filter(models.User.id == current_referrer_id))
+        referrer = referrer_result.scalar_one_or_none()
+        
+        if referrer:
+            commission_amount = plan.price * percentage
+            
+            # Credit to referrer's withdrawal wallet
+            ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
+            setattr(referrer, "withdrawal_wallet_balance", ref_balance + commission_amount)
+            
+            # Update referral code stats
+            code_result = await db.execute(
+                select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1)
+            )
+            ref_code = code_result.scalar_one_or_none()
+            if ref_code:
+                current_earned = getattr(ref_code, "earned_amount", 0.0) or 0.0
+                setattr(ref_code, "earned_amount", current_earned + commission_amount)
+            
+            # Move up the chain
+            current_referrer_id = referrer.referred_by_id
+        else:
+            break
+            
+    await db.commit()
+    return {"message": f"Successfully purchased {plan.name}. Commissions distributed."}
 
 # --- Settings ---
 class UserProfile(BaseModel):
