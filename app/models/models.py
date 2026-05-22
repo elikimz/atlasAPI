@@ -10,6 +10,9 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     is_admin = Column(Boolean, default=False)
+    deposit_wallet_balance = Column(Float, default=0.0)
+    withdrawal_wallet_balance = Column(Float, default=0.0)
+    referral_code = Column(String, unique=True, index=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

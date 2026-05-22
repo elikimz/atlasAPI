@@ -159,28 +159,16 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
                 user.last_name = otp_request.last_name.strip()
             if otp_request.email == "elijahkimani1293@gmail.com":
                 user.is_admin = True
-            await db.commit()
-
-        # --- Auto-generate Referral Code for user if they don't have one ---
-        try:
-            code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
-            if not code_check.scalar_one_or_none():
+            
+            # --- Auto-generate Referral Code for user if they don't have one ---
+            if not getattr(user, "referral_code", None):
                 import string
-                # Generate a random 8-character code (uppercase letters and digits)
                 random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-                # Ensure it's unique
-                while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
+                while (await db.execute(select(models.User).filter(models.User.referral_code == random_code))).scalar_one_or_none():
                     random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-                    
-                new_code = models.ReferralCode(
-                    user_id=user.id,
-                    code=random_code
-                )
-                db.add(new_code)
-                await db.commit()
-        except Exception as e:
-            print(f"Safe Code Gen Error: {e}")
-            await db.rollback()
+                user.referral_code = random_code
+                
+            await db.commit()
 
         # Delete any existing OTPs for this email first to avoid confusion
         await db.execute(delete(models.OTP).filter(models.OTP.email == email))
@@ -288,27 +276,22 @@ async def calculate_dynamic_withdrawal_balance(user_id: int, db: AsyncSession) -
     return float(task_earnings + referral_earnings)
 
 @router.get("/auth/me")
-async def read_users_me(current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_async_db)):
-    # Calculate real-time withdrawal balance from history
-    withdrawal_balance = await calculate_dynamic_withdrawal_balance(current_user.id, db)
-    
+async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return {
         "id": current_user.id,
         "email": current_user.email,
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
-        "is_admin": getattr(current_user, "is_admin", False),
-        "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
-        "withdrawal_wallet_balance": withdrawal_balance,
+        "is_admin": current_user.is_admin,
+        "deposit_wallet_balance": current_user.deposit_wallet_balance,
+        "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
+        "referral_code": current_user.referral_code
     }
 
 @router.get("/wallet/balances")
-async def get_wallet_balances(current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_async_db)):
+async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
     """Get the current user's deposit and withdrawal wallet balances."""
-    # Calculate real-time withdrawal balance from history
-    withdrawal_balance = await calculate_dynamic_withdrawal_balance(current_user.id, db)
-    
     return {
-        "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
-        "withdrawal_wallet_balance": withdrawal_balance,
+        "deposit_wallet_balance": current_user.deposit_wallet_balance,
+        "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
     }
