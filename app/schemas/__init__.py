@@ -18,7 +18,7 @@ class User(UserBase):
     withdrawal_wallet_balance: float
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class OTPRequest(BaseModel):
     email: str
@@ -48,7 +48,7 @@ class Certification(CertificationBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserCertificationBase(BaseModel):
     status: str = "available"
@@ -64,7 +64,7 @@ class UserCertification(UserCertificationBase):
     completed_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class TaskBase(BaseModel):
     name: str
@@ -79,7 +79,7 @@ class Task(TaskBase):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ReferralCodeBase(BaseModel):
     code: str
@@ -95,7 +95,7 @@ class ReferralCode(ReferralCodeBase):
     user_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class PaymentBase(BaseModel):
     amount: float
@@ -112,7 +112,7 @@ class Payment(PaymentBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class EvaluationBase(BaseModel):
     name: str
@@ -129,7 +129,7 @@ class Evaluation(EvaluationBase):
     user_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class VideoTaskBase(BaseModel):
     title: str
@@ -145,7 +145,7 @@ class VideoTask(VideoTaskBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserVideoTaskBase(BaseModel):
     status: str = "pending"
@@ -160,7 +160,7 @@ class UserVideoTask(UserVideoTaskBase):
     completed_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class AvailableTask(BaseModel):
     id: int
