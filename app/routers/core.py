@@ -101,6 +101,10 @@ class DashboardSummary(BaseModel):
     footage_labeled_min: int
     approved_roles: str
     certifications_earned: int
+    active_tasks: int
+    completed_tasks: int
+    pending_videos: int
+    recent_activity: List[dict]
 
 class LearningHubContent(BaseModel):
     guidelines: str
@@ -112,18 +116,56 @@ async def get_dashboard_summary(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    result = await db.execute(
+    # Count certifications
+    cert_result = await db.execute(
         select(func.count(models.UserCertification.id)).filter(
             models.UserCertification.user_id == current_user.id,
             models.UserCertification.status == "completed"
         )
     )
-    completed_certs = result.scalar()
+    completed_certs = cert_result.scalar() or 0
+    
+    # Count active (available) tasks
+    all_tasks_result = await db.execute(select(models.VideoTask))
+    all_tasks = all_tasks_result.scalars().all()
+    
+    uvt_result = await db.execute(
+        select(models.UserVideoTask).filter(
+            models.UserVideoTask.user_id == current_user.id
+        )
+    )
+    user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
+    
+    completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
+    active_tasks_count = len(all_tasks) - completed_tasks_count
+    pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
+
+    # Get recent activity
+    recent_uvt_result = await db.execute(
+        select(models.UserVideoTask, models.VideoTask)
+        .join(models.VideoTask)
+        .filter(models.UserVideoTask.user_id == current_user.id)
+        .order_by(models.UserVideoTask.completed_at.desc())
+        .limit(5)
+    )
+    
+    recent_activity = []
+    for uvt, vt in recent_uvt_result.all():
+        recent_activity.append({
+            "id": uvt.id,
+            "description": f"Completed: {vt.title}",
+            "amount": f"+ ${vt.reward_amount:.2f}",
+            "status": uvt.status.capitalize()
+        })
     
     return {
         "footage_labeled_min": 0,
         "approved_roles": "None yet",
-        "certifications_earned": completed_certs or 0
+        "certifications_earned": completed_certs,
+        "active_tasks": active_tasks_count,
+        "completed_tasks": completed_tasks_count,
+        "pending_videos": pending_videos_count,
+        "recent_activity": recent_activity
     }
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
