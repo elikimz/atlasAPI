@@ -3,7 +3,7 @@ from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
 import os
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -110,101 +110,110 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/auth/login", response_model=dict)
 async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
-    email = otp_request.email.strip().lower()
-    user_result = await db.execute(select(models.User).filter(models.User.email == email))
-    user = user_result.scalar_one_or_none()
-
-    if not user:
-        # Check if names are provided for new user registration
-        if not otp_request.first_name or not otp_request.last_name:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Account not found. Please provide your first and last name to register."
-            )
-        # New user: create with provided details
-        user = models.User(
-            email=email,
-            first_name=otp_request.first_name.strip(),
-            last_name=otp_request.last_name.strip(),
-            is_admin=(email == "elijahkimani1293@gmail.com")
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-
-        # Record referral if provided (wrapped in try/except for 100% safety)
-        if otp_request.referral_code:
-            try:
-                referral_result = await db.execute(
-                    select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
-                )
-                referral = referral_result.scalar_one_or_none()
-                if referral:
-                    relationship = models.ReferralRelationship(
-                        user_id=user.id,
-                        referrer_id=referral.user_id,
-                        referral_code_used=otp_request.referral_code.strip()
-                    )
-                    db.add(relationship)
-                    referral.signups_count = (referral.signups_count or 0) + 1
-                    await db.commit()
-            except Exception:
-                await db.rollback()
-    else:
-        # Returning user: update name fields only if provided and user doesn't have them
-        if otp_request.first_name and not user.first_name:
-            user.first_name = otp_request.first_name.strip()
-        if otp_request.last_name and not user.last_name:
-            user.last_name = otp_request.last_name.strip()
-        if otp_request.email == "elijahkimani1293@gmail.com":
-            user.is_admin = True
-        await db.commit()
-
-    # --- Auto-generate Referral Code for user if they don't have one ---
     try:
-        code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
-        if not code_check.scalar_one_or_none():
-            import string
-            # Generate a random 8-character code (uppercase letters and digits)
-            random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            # Ensure it's unique
-            while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
-                random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-                
-            new_code = models.ReferralCode(
-                user_id=user.id,
-                code=random_code
+        email = otp_request.email.strip().lower()
+        user_result = await db.execute(select(models.User).filter(models.User.email == email))
+        user = user_result.scalar_one_or_none()
+
+        if not user:
+            # Check if names are provided for new user registration
+            if not otp_request.first_name or not otp_request.last_name:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Account not found. Please provide your first and last name to register."
+                )
+            # New user: create with provided details
+            user = models.User(
+                email=email,
+                first_name=otp_request.first_name.strip(),
+                last_name=otp_request.last_name.strip(),
+                is_admin=(email == "elijahkimani1293@gmail.com")
             )
-            db.add(new_code)
+            db.add(user)
             await db.commit()
+            await db.refresh(user)
+
+            # Record referral if provided (wrapped in try/except for 100% safety)
+            if otp_request.referral_code:
+                try:
+                    referral_result = await db.execute(
+                        select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
+                    )
+                    referral = referral_result.scalar_one_or_none()
+                    if referral:
+                        relationship = models.ReferralRelationship(
+                            user_id=user.id,
+                            referrer_id=referral.user_id,
+                            referral_code_used=otp_request.referral_code.strip()
+                        )
+                        db.add(relationship)
+                        referral.signups_count = (referral.signups_count or 0) + 1
+                        await db.commit()
+                except Exception:
+                    await db.rollback()
+        else:
+            # Returning user: update name fields only if provided and user doesn't have them
+            if otp_request.first_name and not user.first_name:
+                user.first_name = otp_request.first_name.strip()
+            if otp_request.last_name and not user.last_name:
+                user.last_name = otp_request.last_name.strip()
+            if otp_request.email == "elijahkimani1293@gmail.com":
+                user.is_admin = True
+            await db.commit()
+
+        # --- Auto-generate Referral Code for user if they don't have one ---
+        try:
+            code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
+            if not code_check.scalar_one_or_none():
+                import string
+                # Generate a random 8-character code (uppercase letters and digits)
+                random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                # Ensure it's unique
+                while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
+                    random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                    
+                new_code = models.ReferralCode(
+                    user_id=user.id,
+                    code=random_code
+                )
+                db.add(new_code)
+                await db.commit()
+        except Exception as e:
+            print(f"Safe Code Gen Error: {e}")
+            await db.rollback()
+
+        # Delete any existing OTPs for this email first to avoid confusion
+        await db.execute(delete(models.OTP).filter(models.OTP.email == email))
+        await db.commit()
+
+        otp_code = str(random.randint(100000, 999999))
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+        otp_entry = models.OTP(
+            email=email,
+            otp_code=otp_code,
+            expires_at=expires_at
+        )
+
+        db.add(otp_entry)
+        await db.commit()
+
+        # ONLY send email if DB save succeeded
+        await send_email(
+            email,
+            "Your OTP for Adpulse Capture",
+            f"Your verification code is: {otp_code}"
+        )
+
+        return {"message": "OTP sent to email"}
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Safe Code Gen Error: {e}")
-        await db.rollback()
-
-    # Delete any existing OTPs for this email first to avoid confusion
-    await db.execute(delete(models.OTP).filter(models.OTP.email == email))
-    await db.commit()
-
-    otp_code = str(random.randint(100000, 999999))
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-
-    otp_entry = models.OTP(
-        email=email,
-        otp_code=otp_code,
-        expires_at=expires_at
-    )
-
-    db.add(otp_entry)
-    await db.commit()
-
-    # ONLY send email if DB save succeeded
-    await send_email(
-        email,
-        "Your OTP for Adpulse Capture",
-        f"Your verification code is: {otp_code}"
-    )
-
-    return {"message": "OTP sent to email"}
+        print(f"CRITICAL LOGIN ERROR: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login system error: {str(e)}"
+        )
 
 
 @router.post("/auth/verify", response_model=Token)
