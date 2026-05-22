@@ -4,9 +4,16 @@ from sqlalchemy import select
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask
 from app.routers.auth import get_current_user
+from pydantic import BaseModel
 import cloudinary
 import cloudinary.uploader
 import os
+
+class VideoTaskCreate(BaseModel):
+    title: str
+    description: str
+    reward_amount: float
+    video_url: str
 
 router = APIRouter()
 
@@ -51,6 +58,27 @@ async def upload_video(
         await db.refresh(db_video_task)
         return db_video_task
     except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.post("/admin/create-video-task")
+async def create_video_task(
+    task_data: VideoTaskCreate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    try:
+        db_video_task = VideoTask(
+            title=task_data.title,
+            description=task_data.description,
+            video_url=task_data.video_url,
+            reward_amount=task_data.reward_amount
+        )
+        db.add(db_video_task)
+        await db.commit()
+        await db.refresh(db_video_task)
+        return db_video_task
+    except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 @router.get("/admin/video-tasks")
