@@ -214,17 +214,22 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     clean_otp = otp_verify.otp_code.strip()
     
     # Check if OTP exists at all for this email and code
-    # We order by ID desc to get the most recent code first if multiple exist
     from sqlalchemy import desc
-    otp_result = await db.execute(
-        select(models.OTP)
-        .filter(models.OTP.email == email, models.OTP.otp_code == clean_otp)
-        .order_by(desc(models.OTP.id))
+    
+    # DIAGNOSTIC: Get ALL codes for this email to see what's happening
+    all_codes_result = await db.execute(
+        select(models.OTP).filter(models.OTP.email == email).order_by(desc(models.OTP.id))
     )
-    otp_entry = otp_result.scalars().first()
+    all_codes = all_codes_result.scalars().all()
+    
+    otp_entry = next((o for o in all_codes if o.otp_code == clean_otp), None)
 
     if not otp_entry:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+        code_list = ", ".join([o.otp_code for o in all_codes])
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail=f"Invalid code. Server has codes: [{code_list}] for {email}"
+        )
     
     # Temporarily bypassing clock check to identify if this is a timing issue
     # We will still delete the OTP after use to maintain security
