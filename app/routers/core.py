@@ -89,11 +89,50 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
     current_balance = getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0
     setattr(current_user, "withdrawal_wallet_balance", current_balance + video_task.reward_amount)
     
+    # --- Multi-Tier Referral Rebates ---
+    # Tier A: 10%, Tier B: 4%, Tier C: 1%
+    rebate_config = [
+        ("A", 0.10),
+        ("B", 0.04),
+        ("C", 0.01)
+    ]
+    
+    current_referrer_id = current_user.referred_by_id
+    for tier_label, percentage in rebate_config:
+        if not current_referrer_id:
+            break
+            
+        # Fetch the referrer
+        referrer_result = await db.execute(select(models.User).filter(models.User.id == current_referrer_id))
+        referrer = referrer_result.scalar_one_or_none()
+        
+        if referrer:
+            rebate_amount = video_task.reward_amount * percentage
+            
+            # 1. Update referrer's withdrawal wallet
+            ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
+            setattr(referrer, "withdrawal_wallet_balance", ref_balance + rebate_amount)
+            
+            # 2. Update referral code stats for tracking (find the code they used)
+            # We look for any code owned by this referrer
+            code_result = await db.execute(
+                select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1)
+            )
+            ref_code = code_result.scalar_one_or_none()
+            if ref_code:
+                current_rebate_total = getattr(ref_code, "task_rebate_amount", 0.0) or 0.0
+                setattr(ref_code, "task_rebate_amount", current_rebate_total + rebate_amount)
+            
+            # Move to the next level up the chain
+            current_referrer_id = referrer.referred_by_id
+        else:
+            break
+    
     await db.commit()
     await db.refresh(current_user)
     await db.refresh(user_video_task)
 
-    return {"message": "Task completed successfully and withdrawal wallet updated"}
+    return {"message": "Task completed successfully, wallet updated, and referral rebates distributed"}
 
 # --- Existing Endpoints ---
 
