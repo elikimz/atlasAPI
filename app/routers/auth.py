@@ -46,8 +46,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 class OTPRequest(BaseModel):
-    first_name: str
-    last_name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: str
     referral_code: Optional[str] = None
 
