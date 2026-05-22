@@ -11,8 +11,8 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # deposit_wallet_balance = Column(Float, default=0.0)
-    # withdrawal_wallet_balance = Column(Float, default=0.0)
+    deposit_wallet_balance = Column(Float, default=0.0)
+    withdrawal_wallet_balance = Column(Float, default=0.0)
 
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
