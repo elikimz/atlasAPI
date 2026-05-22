@@ -115,6 +115,12 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     user = user_result.scalar_one_or_none()
 
     if not user:
+        # Check if names are provided for new user
+        if not otp_request.first_name or not otp_request.last_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account not found. Please provide your first and last name to register."
+            )
         # New user: create with provided details
         user = models.User(
             email=email,
