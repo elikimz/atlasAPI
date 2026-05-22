@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -71,13 +71,13 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
             user_id=current_user.id,
             video_task_id=video_task.id,
             status="completed",
-            completed_at=datetime.utcnow()
+            completed_at=datetime.now(timezone.utc)
         )
         db.add(user_video_task)
     else:
         # Update existing entry if it was pending/rejected
         user_video_task.status = "completed"
-        user_video_task.completed_at = datetime.utcnow()
+        user_video_task.completed_at = datetime.now(timezone.utc)
 
     # Update balance
     current_user.withdrawal_wallet_balance += video_task.reward_amount
@@ -166,7 +166,7 @@ async def start_certification(
         user_id=current_user.id,
         certification_id=id,
         status="in_progress",
-        started_at=datetime.utcnow()
+        started_at=datetime.now(timezone.utc)
     )
     db.add(new_user_cert)
     await db.commit()

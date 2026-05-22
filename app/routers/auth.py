@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
@@ -82,9 +82,9 @@ class WalletBalances(BaseModel):
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -145,7 +145,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         await db.commit()
 
     otp_code = str(random.randint(100000, 999999))
-    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     otp_entry = models.OTP(
         email=otp_request.email,
@@ -170,7 +170,7 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     otp_entry = await db.execute(select(models.OTP).filter(
         models.OTP.email == otp_verify.email,
         models.OTP.otp_code == otp_verify.otp_code,
-        models.OTP.expires_at > datetime.utcnow()
+        models.OTP.expires_at > datetime.now(timezone.utc)
     ))
     otp_entry = otp_entry.scalar_one_or_none()
 
