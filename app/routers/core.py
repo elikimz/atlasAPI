@@ -86,8 +86,9 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         user_video_task.completed_at = datetime.now(timezone.utc)
 
     # Update withdrawal wallet balance with task reward
-    current_balance = getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0
-    setattr(current_user, "withdrawal_wallet_balance", current_balance + video_task.reward_amount)
+    if hasattr(current_user, "withdrawal_wallet_balance"):
+        current_balance = getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0
+        setattr(current_user, "withdrawal_wallet_balance", current_balance + video_task.reward_amount)
     
     # --- Multi-Tier Referral Rebates ---
     # Tier A: 10%, Tier B: 4%, Tier C: 1%
@@ -97,7 +98,7 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         ("C", 0.01)
     ]
     
-    current_referrer_id = current_user.referred_by_id
+    current_referrer_id = getattr(current_user, "referred_by_id", None)
     for tier_label, percentage in rebate_config:
         if not current_referrer_id:
             break
@@ -110,8 +111,9 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
             rebate_amount = video_task.reward_amount * percentage
             
             # 1. Update referrer's withdrawal wallet
-            ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
-            setattr(referrer, "withdrawal_wallet_balance", ref_balance + rebate_amount)
+            if hasattr(referrer, "withdrawal_wallet_balance"):
+                ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
+                setattr(referrer, "withdrawal_wallet_balance", ref_balance + rebate_amount)
             
             # 2. Update referral code stats for tracking (find the code they used)
             # We look for any code owned by this referrer
@@ -124,7 +126,7 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
                 setattr(ref_code, "task_rebate_amount", current_rebate_total + rebate_amount)
             
             # Move to the next level up the chain
-            current_referrer_id = referrer.referred_by_id
+            current_referrer_id = getattr(referrer, "referred_by_id", None)
         else:
             break
     
