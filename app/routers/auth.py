@@ -64,9 +64,10 @@ class UserInDB(BaseModel):
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    is_admin: bool = False
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
