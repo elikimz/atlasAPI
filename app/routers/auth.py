@@ -110,16 +110,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/auth/login", response_model=dict)
 async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
-    user_result = await db.execute(select(models.User).filter(models.User.email == otp_request.email))
+    email = otp_request.email.strip().lower()
+    user_result = await db.execute(select(models.User).filter(models.User.email == email))
     user = user_result.scalar_one_or_none()
 
     if not user:
         # New user: create with provided details
         user = models.User(
-            email=otp_request.email,
+            email=email,
             first_name=otp_request.first_name,
             last_name=otp_request.last_name,
-            is_admin=(otp_request.email == "elijahkimani1293@gmail.com")
+            is_admin=(email == "elijahkimani1293@gmail.com")
         )
         db.add(user)
         await db.commit()
@@ -148,7 +149,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     otp_entry = models.OTP(
-        email=otp_request.email,
+        email=email,
         otp_code=otp_code,
         expires_at=expires_at
     )
@@ -157,7 +158,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     await db.commit()
 
     await send_email(
-        otp_request.email,
+        email,
         "Your OTP for Adpulse Capture",
         f"Your verification code is: {otp_code}"
     )
@@ -167,17 +168,23 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
 
 @router.post("/auth/verify", response_model=Token)
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
-    otp_entry = await db.execute(select(models.OTP).filter(
-        models.OTP.email == otp_verify.email,
-        models.OTP.otp_code == otp_verify.otp_code,
-        models.OTP.expires_at > datetime.now(timezone.utc)
+    email = otp_verify.email.strip().lower()
+    # Check if OTP exists at all for this email and code
+    otp_result = await db.execute(select(models.OTP).filter(
+        models.OTP.email == email,
+        models.OTP.otp_code == otp_verify.otp_code
     ))
-    otp_entry = otp_entry.scalar_one_or_none()
+    otp_entry = otp_result.scalar_one_or_none()
 
     if not otp_entry:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+    
+    if otp_entry.expires_at < datetime.now(timezone.utc):
+        await db.delete(otp_entry)
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
 
-    user = await db.execute(select(models.User).filter(models.User.email == otp_verify.email))
+    user = await db.execute(select(models.User).filter(models.User.email == email))
     user = user.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
