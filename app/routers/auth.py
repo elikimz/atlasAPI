@@ -65,6 +65,16 @@ class UserInDB(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     is_admin: bool = False
+    deposit_wallet_balance: float = 0.0
+    withdrawal_wallet_balance: float = 0.0
+
+    class Config:
+        from_attributes = True
+
+
+class WalletBalances(BaseModel):
+    deposit_wallet_balance: float
+    withdrawal_wallet_balance: float
 
     class Config:
         from_attributes = True
@@ -188,3 +198,12 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 @router.get("/auth/me", response_model=UserInDB)
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/wallet/balances", response_model=WalletBalances)
+async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
+    """Get the current user's deposit and withdrawal wallet balances."""
+    return {
+        "deposit_wallet_balance": current_user.deposit_wallet_balance or 0.0,
+        "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance or 0.0,
+    }

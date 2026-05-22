@@ -37,6 +37,14 @@ async def get_available_tasks(db: AsyncSession = Depends(get_async_db), current_
 
     return available_tasks
 
+@router.get("/tasks/all", response_model=List[AvailableTask])
+async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
+    """Return all video tasks regardless of completion status (used for task detail view)."""
+    result = await db.execute(select(models.VideoTask))
+    all_video_tasks = result.scalars().all()
+    return all_video_tasks
+
+
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
 async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
     vt_result = await db.execute(select(models.VideoTask).filter(models.VideoTask.id == task_completion.video_task_id))
