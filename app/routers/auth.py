@@ -206,22 +206,29 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     clean_otp = otp_verify.otp_code.strip()
     
     # Check if OTP exists at all for this email and code
-    otp_result = await db.execute(select(models.OTP).filter(
-        models.OTP.email == email,
-        models.OTP.otp_code == clean_otp
-    ))
-    otp_entry = otp_result.scalar_one_or_none()
+    # We order by ID desc to get the most recent code first if multiple exist
+    from sqlalchemy import desc
+    otp_result = await db.execute(
+        select(models.OTP)
+        .filter(models.OTP.email == email, models.OTP.otp_code == clean_otp)
+        .order_by(desc(models.OTP.id))
+    )
+    otp_entry = otp_result.scalars().first()
 
     if not otp_entry:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
     
-    # Simple 30-minute window for extreme robustness against any clock drift
+    # Simple 60-minute window for extreme robustness against any clock drift
     current_time = datetime.now(timezone.utc)
-    created_at = otp_entry.created_at or otp_entry.expires_at - timedelta(minutes=10)
-    if created_at.tzinfo is None:
+    
+    # Ensure created_at is timezone-aware
+    created_at = otp_entry.created_at
+    if created_at is None:
+        created_at = datetime.now(timezone.utc)
+    elif created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     
-    if (current_time - created_at) > timedelta(minutes=30):
+    if (current_time - created_at) > timedelta(minutes=60):
         await db.delete(otp_entry)
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
