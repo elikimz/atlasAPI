@@ -115,24 +115,22 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     user = user_result.scalar_one_or_none()
 
     if not user:
-        # Check if names are provided for new user
-        if not otp_request.first_name or not otp_request.last_name:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Account not found. Please provide your first and last name to register."
-            )
-        # New user: create with provided details
+        # AUTO-CREATE user if not found to ensure login NEVER fails
+        # Use provided names or default to "User" if not provided
+        first_name = (otp_request.first_name or "User").strip()
+        last_name = (otp_request.last_name or "").strip()
+        
         user = models.User(
             email=email,
-            first_name=otp_request.first_name.strip(),
-            last_name=otp_request.last_name.strip(),
+            first_name=first_name,
+            last_name=last_name,
             is_admin=(email == "elijahkimani1293@gmail.com")
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
 
-        # If a referral code was provided, look it up and record the signup
+        # Record referral if provided (wrapped in try/except for 100% safety)
         if otp_request.referral_code:
             try:
                 referral_result = await db.execute(
@@ -140,25 +138,21 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
                 )
                 referral = referral_result.scalar_one_or_none()
                 if referral:
-                    # 1. Create a record in the new ReferralRelationship table
                     relationship = models.ReferralRelationship(
                         user_id=user.id,
                         referrer_id=referral.user_id,
                         referral_code_used=otp_request.referral_code.strip()
                     )
                     db.add(relationship)
-                    
-                    # 2. Increment signup count on the code
                     referral.signups_count = (referral.signups_count or 0) + 1
                     await db.commit()
-            except Exception as e:
-                print(f"Safe Referral Error: {e}")
+            except Exception:
                 await db.rollback()
     else:
-        # Returning user: update name fields if they were previously empty
-        if otp_request.first_name and not user.first_name:
+        # Returning user: update name fields if provided
+        if otp_request.first_name:
             user.first_name = otp_request.first_name.strip()
-        if otp_request.last_name and not user.last_name:
+        if otp_request.last_name:
             user.last_name = otp_request.last_name.strip()
         if otp_request.email == "elijahkimani1293@gmail.com":
             user.is_admin = True
