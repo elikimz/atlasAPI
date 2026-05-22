@@ -227,9 +227,30 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 
 
 
+async def calculate_dynamic_withdrawal_balance(user_id: int, db: AsyncSession) -> float:
+    """Calculate real withdrawal balance by summing all earned rewards and rebates."""
+    # 1. Sum rewards from completed tasks
+    task_result = await db.execute(
+        select(func.sum(models.VideoTask.reward_amount))
+        .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
+        .filter(models.UserVideoTask.user_id == user_id, models.UserVideoTask.status == "completed")
+    )
+    task_earnings = task_result.scalar() or 0.0
+    
+    # 2. Sum referral rebates (stored on ReferralCode for this user)
+    code_result = await db.execute(
+        select(func.sum(models.ReferralCode.earned_amount + models.ReferralCode.task_rebate_amount))
+        .filter(models.ReferralCode.user_id == user_id)
+    )
+    referral_earnings = code_result.scalar() or 0.0
+    
+    return float(task_earnings + referral_earnings)
+
 @router.get("/auth/me")
-async def read_users_me(current_user: models.User = Depends(get_current_user)):
-    # Convert to dict and handle potentially missing DB columns safely
+async def read_users_me(current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_async_db)):
+    # Calculate real-time withdrawal balance from history
+    withdrawal_balance = await calculate_dynamic_withdrawal_balance(current_user.id, db)
+    
     return {
         "id": current_user.id,
         "email": current_user.email,
@@ -237,14 +258,16 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "last_name": current_user.last_name,
         "is_admin": getattr(current_user, "is_admin", False),
         "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
-        "withdrawal_wallet_balance": getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0,
+        "withdrawal_wallet_balance": withdrawal_balance,
     }
 
 @router.get("/wallet/balances")
-async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
+async def get_wallet_balances(current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_async_db)):
     """Get the current user's deposit and withdrawal wallet balances."""
-    # Use getattr to safely handle missing DB columns without crashing
+    # Calculate real-time withdrawal balance from history
+    withdrawal_balance = await calculate_dynamic_withdrawal_balance(current_user.id, db)
+    
     return {
         "deposit_wallet_balance": getattr(current_user, "deposit_wallet_balance", 0.0) or 0.0,
-        "withdrawal_wallet_balance": getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0,
+        "withdrawal_wallet_balance": withdrawal_balance,
     }
