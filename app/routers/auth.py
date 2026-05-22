@@ -124,8 +124,8 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         # New user: create with provided details
         user = models.User(
             email=email,
-            first_name=otp_request.first_name,
-            last_name=otp_request.last_name,
+            first_name=otp_request.first_name.strip(),
+            last_name=otp_request.last_name.strip(),
             is_admin=(email == "elijahkimani1293@gmail.com")
         )
         db.add(user)
@@ -135,13 +135,13 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         # If a referral code was provided, look it up and record the signup
         if otp_request.referral_code:
             referral_result = await db.execute(
-                select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code)
+                select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
             )
             referral = referral_result.scalar_one_or_none()
             if referral:
                 # Link the new user to their referrer
                 user.referred_by_id = referral.user_id
-                user.referral_code_used = otp_request.referral_code
+                user.referral_code_used = otp_request.referral_code.strip()
                 
                 # Increment signup count
                 referral.signups_count = (referral.signups_count or 0) + 1
@@ -149,9 +149,9 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     else:
         # Returning user: update name fields if they were previously empty
         if otp_request.first_name and not user.first_name:
-            user.first_name = otp_request.first_name
+            user.first_name = otp_request.first_name.strip()
         if otp_request.last_name and not user.last_name:
-            user.last_name = otp_request.last_name
+            user.last_name = otp_request.last_name.strip()
         if otp_request.email == "elijahkimani1293@gmail.com":
             user.is_admin = True
         await db.commit()
