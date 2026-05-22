@@ -185,11 +185,13 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
         print(f"Safe Code Gen Error: {e}")
         await db.rollback()
 
-    otp_code = str(random.randint(100000, 999999))
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    # Delete any existing OTPs for this email first to avoid confusion
+    await db.execute(delete(models.OTP).filter(models.OTP.email == email))
+    await db.commit()
 
-    # Ensure code is clean string
-    otp_code = otp_code.strip()
+    otp_code = str(random.randint(100000, 999999))
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+
     otp_entry = models.OTP(
         email=email,
         otp_code=otp_code,
@@ -199,6 +201,7 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     db.add(otp_entry)
     await db.commit()
 
+    # ONLY send email if DB save succeeded
     await send_email(
         email,
         "Your OTP for Adpulse Capture",
@@ -213,27 +216,30 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     email = otp_verify.email.strip().lower()
     clean_otp = otp_verify.otp_code.strip()
     
-    # Check if OTP exists at all for this email and code
+    # Check if OTP exists for this email and code
     from sqlalchemy import desc
-    
-    # DIAGNOSTIC: Get ALL codes for this email to see what's happening
-    all_codes_result = await db.execute(
-        select(models.OTP).filter(models.OTP.email == email).order_by(desc(models.OTP.id))
+    otp_result = await db.execute(
+        select(models.OTP)
+        .filter(models.OTP.email == email, models.OTP.otp_code == clean_otp)
+        .order_by(desc(models.OTP.id))
     )
-    all_codes = all_codes_result.scalars().all()
-    
-    otp_entry = next((o for o in all_codes if o.otp_code == clean_otp), None)
+    otp_entry = otp_result.scalars().first()
 
     if not otp_entry:
-        code_list = ", ".join([o.otp_code for o in all_codes])
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Invalid code. Server has codes: [{code_list}] for {email}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
     
-    # Temporarily bypassing clock check to identify if this is a timing issue
-    # We will still delete the OTP after use to maintain security
-    pass
+    # 60-minute safety window
+    current_time = datetime.now(timezone.utc)
+    created_at = otp_entry.created_at
+    if created_at is None:
+        created_at = datetime.now(timezone.utc)
+    elif created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    
+    if (current_time - created_at) > timedelta(minutes=60):
+        await db.delete(otp_entry)
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
 
     user = await db.execute(select(models.User).filter(models.User.email == email))
     user = user.scalar_one_or_none()
