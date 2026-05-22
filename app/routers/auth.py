@@ -160,6 +160,23 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
             user.is_admin = True
         await db.commit()
 
+    # --- Auto-generate Referral Code for user if they don't have one ---
+    code_check = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
+    if not code_check.scalar_one_or_none():
+        import string
+        # Generate a random 8-character code (uppercase letters and digits)
+        random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        # Ensure it's unique
+        while (await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == random_code))).scalar_one_or_none():
+            random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+            
+        new_code = models.ReferralCode(
+            user_id=user.id,
+            code=random_code
+        )
+        db.add(new_code)
+        await db.commit()
+
     otp_code = str(random.randint(100000, 999999))
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
