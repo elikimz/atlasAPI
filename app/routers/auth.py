@@ -139,6 +139,11 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
             )
             referral = referral_result.scalar_one_or_none()
             if referral:
+                # Link the new user to their referrer
+                user.referred_by_id = referral.user_id
+                user.referral_code_used = otp_request.referral_code
+                
+                # Increment signup count
                 referral.signups_count = (referral.signups_count or 0) + 1
                 await db.commit()
     else:

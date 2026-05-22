@@ -31,19 +31,25 @@ async def get_tasks(
 class ReferralSummary(BaseModel):
     earnings: float
     users_referred: int
-    passed_training: int
+    task_rebate: float
 
 class ReferralCodeSchema(BaseModel):
     code: str
     signups: int
     trained: int
     earned: float
+    task_rebate: float
 
     class Config:
         orm_mode = True
 
 class ReferralCodeCreate(BaseModel):
     code: str
+
+class InvitedUser(BaseModel):
+    name: str
+    status: str
+    tier: str
 
 @router.get("/referrals/summary", response_model=ReferralSummary)
 async def get_referral_summary(
@@ -57,13 +63,47 @@ async def get_referral_summary(
     
     total_earnings = sum(c.earned_amount for c in codes)
     total_signups = sum(c.signups_count for c in codes)
-    total_trained = sum(c.trained_count for c in codes)
+    total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
     
     return {
         "earnings": total_earnings,
         "users_referred": total_signups,
-        "passed_training": total_trained
+        "task_rebate": total_task_rebate
     }
+
+@router.get("/referrals/active", response_model=List[InvitedUser])
+async def get_active_referrals(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # This is a simplified multi-tier fetch (Tier A only for now as a base)
+    # Tier A: Direct referrals
+    result = await db.execute(
+        select(models.User).filter(models.User.referred_by_id == current_user.id)
+    )
+    tier_a_users = result.scalars().all()
+    
+    invited_users = []
+    for u in tier_a_users:
+        # Determine status based on task completion or sign up
+        # If they have completed any video tasks, they are "Completed"
+        task_result = await db.execute(
+            select(models.UserVideoTask).filter(
+                models.UserVideoTask.user_id == u.id,
+                models.UserVideoTask.status == "completed"
+            )
+        )
+        has_completed_tasks = task_result.scalar_one_or_none() is not None
+        
+        status_text = "Completed" if has_completed_tasks else "Awaiting Task"
+        
+        invited_users.append({
+            "name": f"{u.first_name or 'User'} {u.last_name or u.id}",
+            "status": status_text,
+            "tier": "A"
+        })
+        
+    return invited_users
 
 @router.get("/referrals/codes", response_model=List[ReferralCodeSchema])
 async def get_referral_codes(
@@ -74,7 +114,13 @@ async def get_referral_codes(
         select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
     )
     codes = result.scalars().all()
-    return [{"code": c.code, "signups": c.signups_count, "trained": c.trained_count, "earned": c.earned_amount} for c in codes]
+    return [{
+        "code": c.code, 
+        "signups": c.signups_count, 
+        "trained": c.trained_count, 
+        "earned": c.earned_amount,
+        "task_rebate": getattr(c, "task_rebate_amount", 0.0) or 0.0
+    } for c in codes]
 
 @router.post("/referrals/codes", response_model=ReferralCodeSchema)
 async def create_referral_code(

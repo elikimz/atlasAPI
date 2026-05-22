@@ -13,6 +13,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deposit_wallet_balance = Column(Float, default=0.0)
     withdrawal_wallet_balance = Column(Float, default=0.0)
+    
+    # Referral Tracking
+    referred_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    referral_code_used = Column(String, nullable=True)
 
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
@@ -20,6 +24,9 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     evaluations = relationship("Evaluation", back_populates="user")
     video_tasks = relationship("UserVideoTask", back_populates="user")
+    
+    # Self-referential relationship for multi-tier
+    referrer = relationship("User", remote_side=[id], backref="referrals")
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -70,6 +77,7 @@ class ReferralCode(Base):
     signups_count = Column(Integer, default=0)
     trained_count = Column(Integer, default=0)
     earned_amount = Column(Float, default=0.0)
+    task_rebate_amount = Column(Float, default=0.0) # New: specifically for task-based rebates
 
     user = relationship("User", back_populates="referral_codes")
 
