@@ -115,15 +115,17 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
     user = user_result.scalar_one_or_none()
 
     if not user:
-        # AUTO-CREATE user if not found to ensure login NEVER fails
-        # Use provided names or default to "User" if not provided
-        first_name = (otp_request.first_name or "User").strip()
-        last_name = (otp_request.last_name or "").strip()
-        
+        # Check if names are provided for new user registration
+        if not otp_request.first_name or not otp_request.last_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account not found. Please provide your first and last name to register."
+            )
+        # New user: create with provided details
         user = models.User(
             email=email,
-            first_name=first_name,
-            last_name=last_name,
+            first_name=otp_request.first_name.strip(),
+            last_name=otp_request.last_name.strip(),
             is_admin=(email == "elijahkimani1293@gmail.com")
         )
         db.add(user)
@@ -149,10 +151,10 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
             except Exception:
                 await db.rollback()
     else:
-        # Returning user: update name fields if provided
-        if otp_request.first_name:
+        # Returning user: update name fields only if provided and user doesn't have them
+        if otp_request.first_name and not user.first_name:
             user.first_name = otp_request.first_name.strip()
-        if otp_request.last_name:
+        if otp_request.last_name and not user.last_name:
             user.last_name = otp_request.last_name.strip()
         if otp_request.email == "elijahkimani1293@gmail.com":
             user.is_admin = True
