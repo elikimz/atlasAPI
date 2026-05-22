@@ -172,6 +172,11 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
     email = otp_verify.email.strip().lower()
     clean_otp = otp_verify.otp_code.strip()
+    
+    # DEBUG: Let's find ANY otp for this email to see what's in the DB
+    debug_result = await db.execute(select(models.OTP).filter(models.OTP.email == email).order_by(models.OTP.created_at.desc()))
+    all_user_otps = debug_result.scalars().all()
+    
     # Check if OTP exists at all for this email and code
     otp_result = await db.execute(select(models.OTP).filter(
         models.OTP.email == email,
@@ -180,7 +185,11 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     otp_entry = otp_result.scalar_one_or_none()
 
     if not otp_entry:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+        # If not found, provide more helpful debug info in the error (TEMPORARY)
+        msg = f"Invalid code. Found {len(all_user_otps)} other codes for this email."
+        if all_user_otps:
+            msg += f" Latest code starts with {all_user_otps[0].otp_code[:2]}..."
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
     
     # Check if the code is older than 15 minutes based on its creation time
     # This is more robust against server clock drift than checking an absolute expires_at
@@ -223,7 +232,11 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
-# Debug endpoint removed after investigation
+@router.get("/auth/debug/otps")
+async def debug_otps(db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(select(models.OTP).order_by(models.OTP.created_at.desc()).limit(10))
+    otps = result.scalars().all()
+    return [{"email": o.email, "code": o.otp_code, "expires": o.expires_at, "created": o.created_at} for o in otps]
 
 
 @router.get("/wallet/balances", response_model=WalletBalances)
