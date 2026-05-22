@@ -19,6 +19,7 @@ class User(Base):
     referral_codes = relationship("ReferralCode", back_populates="user")
     payments = relationship("Payment", back_populates="user")
     evaluations = relationship("Evaluation", back_populates="user")
+    video_tasks = relationship("UserVideoTask", back_populates="user")
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -96,8 +97,7 @@ class Evaluation(Base):
     episodes_passing_audit = Column(Integer, default=0)
     status = Column(String, default="in_progress")
 
-    user = relationship("Evaluation", back_populates="evaluations")
-    video_tasks = relationship("UserVideoTask", back_populates="user")
+    user = relationship("User", back_populates="evaluations")
 
 class VideoTask(Base):
     __tablename__ = "video_tasks"

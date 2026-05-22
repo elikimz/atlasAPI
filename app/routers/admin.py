@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy.orm import Session
-from app.database.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.database import get_async_db
 from app.models.models import User, VideoTask
-from app.schemas.schemas import VideoTaskCreate
-from app.auth.auth import get_current_user
+from app.routers.auth import get_current_user
 import cloudinary
 import cloudinary.uploader
 import os
@@ -22,16 +22,18 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     return current_user
 
-@router.post("/admin/upload-video", response_model=VideoTaskCreate)
+@router.post("/admin/upload-video")
 async def upload_video(
     title: str,
     description: str,
     reward_amount: float,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
     try:
+        # Note: cloudinary upload is synchronous, but in a real async environment 
+        # you might want to run this in a threadpool
         upload_result = cloudinary.uploader.upload(file.file, resource_type="video")
         video_url = upload_result.get("secure_url")
 
@@ -45,16 +47,17 @@ async def upload_video(
             reward_amount=reward_amount
         )
         db.add(db_video_task)
-        db.commit()
-        db.refresh(db_video_task)
+        await db.commit()
+        await db.refresh(db_video_task)
         return db_video_task
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 @router.get("/admin/video-tasks")
 async def get_all_video_tasks(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    video_tasks = db.query(VideoTask).all()
+    result = await db.execute(select(VideoTask))
+    video_tasks = result.scalars().all()
     return video_tasks
