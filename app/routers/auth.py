@@ -3,7 +3,7 @@ from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
 import os
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer

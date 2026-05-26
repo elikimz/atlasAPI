@@ -46,6 +46,14 @@ async def on_startup():
         except Exception as e:
             print(f"Migration Notice (Safe to ignore if columns exist): {e}")
 
+@app.on_event("shutdown")
+async def on_shutdown():
+    """Dispose pooled DB connections when the application shuts down."""
+    from app.database.database import engine
+
+    await engine.dispose()
+
+
 @app.get("/")
 def root():
     return {"message": "Adpulse API is running 🚀"}
