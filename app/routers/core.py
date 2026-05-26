@@ -220,6 +220,13 @@ async def get_certifications(
     )
     user_certs = {uc.certification_id: uc.status for uc in uc_result.scalars().all()}
     
+    # Fetch a fallback video from video_tasks if needed
+    fallback_video_url = None
+    video_result = await db.execute(select(models.VideoTask).limit(1))
+    fallback_video = video_result.scalar_one_or_none()
+    if fallback_video:
+        fallback_video_url = fallback_video.video_url
+
     response = []
     for cert in all_certs:
         status = user_certs.get(cert.id, "available")
@@ -228,7 +235,7 @@ async def get_certifications(
             "name": cert.name, 
             "description": cert.description,
             "estimated_time": cert.estimated_time,
-            "video_url": cert.video_url,
+            "video_url": cert.video_url or fallback_video_url,
             "status": status
         })
     
