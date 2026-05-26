@@ -268,3 +268,32 @@ async def get_learning_hub(current_user: models.User = Depends(get_current_user)
         "references": "Reference materials for labeling...",
         "training_videos": "https://example.com/training-video.mp4"
     }
+
+@router.post("/training/certifications/{id}/complete", response_model=dict)
+async def complete_certification(
+    id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
+    cert = cert_result.scalar_one_or_none()
+    
+    if not cert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certification not found")
+    
+    uc_result = await db.execute(
+        select(models.UserCertification).filter(
+            models.UserCertification.user_id == current_user.id,
+            models.UserCertification.certification_id == id
+        )
+    )
+    user_cert = uc_result.scalar_one_or_none()
+    
+    if not user_cert:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User certification not found")
+    
+    user_cert.status = "completed"
+    user_cert.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+    
+    return {"message": "Certification completed"}
