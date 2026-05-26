@@ -51,6 +51,7 @@ class InvitedUser(BaseModel):
     name: str
     status: str
     tier: str
+    is_active: bool
 
 @router.get("/referrals/summary", response_model=ReferralSummary)
 async def get_referral_summary(
@@ -85,14 +86,25 @@ async def get_active_referrals(
     
     try:
         # Helper to get status for a user
-        async def get_user_status(user_id):
+        async def get_user_status_and_activity(user_id):
+            # Check if user has an active plan
+            plan_result = await db.execute(
+                select(models.UserPlan).filter(
+                    models.UserPlan.user_id == user_id,
+                    models.UserPlan.status == "active",
+                    models.UserPlan.expires_at > datetime.now(timezone.utc)
+                )
+            )
+            has_active_plan = plan_result.scalars().first() is not None
+            
             task_result = await db.execute(
                 select(models.UserVideoTask).filter(
                     models.UserVideoTask.user_id == user_id,
                     models.UserVideoTask.status == "completed"
                 )
             )
-            return "Completed" if task_result.scalars().first() else "Awaiting Task"
+            status = "Accepted" if task_result.scalars().first() else "Invite Sent"
+            return status, has_active_plan
 
         # Tier A: Direct referrals (users referred by current_user)
         result_a = await db.execute(
@@ -103,8 +115,13 @@ async def get_active_referrals(
         tier_a_users = result_a.scalars().all()
         
         for u in tier_a_users:
-            status = await get_user_status(u.id)
-            invited_users.append({"name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), "status": status, "tier": "A"})
+            status, is_active = await get_user_status_and_activity(u.id)
+            invited_users.append({
+                "name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), 
+                "status": status, 
+                "tier": "A",
+                "is_active": is_active
+            })
             
             # Tier B: Referrals of Tier A
             result_b = await db.execute(
@@ -114,8 +131,13 @@ async def get_active_referrals(
             )
             tier_b_users = result_b.scalars().all()
             for ub in tier_b_users:
-                status_b = await get_user_status(ub.id)
-                invited_users.append({"name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), "status": status_b, "tier": "B"})
+                status_b, is_active_b = await get_user_status_and_activity(ub.id)
+                invited_users.append({
+                    "name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), 
+                    "status": status_b, 
+                    "tier": "B",
+                    "is_active": is_active_b
+                })
                 
                 # Tier C: Referrals of Tier B
                 result_c = await db.execute(
@@ -124,9 +146,14 @@ async def get_active_referrals(
                     .filter(models.ReferralRelationship.referrer_id == ub.id)
                 )
                 tier_c_users = result_c.scalars().all()
-                for uc in tier_c_users:
-                    status_c = await get_user_status(uc.id)
-                    invited_users.append({"name": f"{uc.first_name or 'User'} {uc.last_name or ''}".strip(), "status": status_c, "tier": "C"})
+                for uc_user in tier_c_users:
+                    status_c, is_active_c = await get_user_status_and_activity(uc_user.id)
+                    invited_users.append({
+                        "name": f"{uc_user.first_name or 'User'} {uc_user.last_name or ''}".strip(), 
+                        "status": status_c, 
+                        "tier": "C",
+                        "is_active": is_active_c
+                    })
     except Exception as e:
         print(f"Safe Active Referrals Error: {e}")
         
