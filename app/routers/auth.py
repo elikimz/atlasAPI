@@ -167,6 +167,12 @@ async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_asyn
                 while (await db.execute(select(models.User).filter(models.User.referral_code == random_code))).scalar_one_or_none():
                     random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                 user.referral_code = random_code
+            
+            # Ensure a record exists in the referral_codes table as well
+            ref_code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
+            if not ref_code_result.scalar_one_or_none():
+                new_ref_code = models.ReferralCode(user_id=user.id, code=user.referral_code)
+                db.add(new_ref_code)
                 
             await db.commit()
 

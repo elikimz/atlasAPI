@@ -169,6 +169,15 @@ async def get_referral_codes(
             select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
         )
         codes = result.scalars().all()
+        
+        # If no code record exists but user has a referral_code in the users table, create it
+        if not codes and current_user.referral_code:
+            new_code = models.ReferralCode(user_id=current_user.id, code=current_user.referral_code)
+            db.add(new_code)
+            await db.commit()
+            await db.refresh(new_code)
+            codes = [new_code]
+            
         return [{
             "code": c.code, 
             "signups": getattr(c, "signups_count", 0) or 0, 
