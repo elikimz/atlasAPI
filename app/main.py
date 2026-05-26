@@ -43,8 +43,29 @@ async def on_startup():
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0"))
             # Check for video_url in video_tasks
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
+            # Check for video_url in certifications
+            await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
         except Exception as e:
             print(f"Migration Notice (Safe to ignore if columns exist): {e}")
+
+    # Seed default training if none exists
+    from app.database.database import get_async_db
+    async for db in get_async_db():
+        try:
+            result = await db.execute(select(models.Certification).filter(models.Certification.name == "Video Reviewing Mastery"))
+            if not result.scalar_one_or_none():
+                default_cert = models.Certification(
+                    name="Video Reviewing Mastery",
+                    description="Master the essentials of video assessment in this focused, single-video module. Gain the key insight required for standard tasks and become a qualified reviewer. This efficient course prepares you for premium-paying tasks.",
+                    estimated_time="15 mins",
+                    video_url="https://res.cloudinary.com/demo/video/upload/dog.mp4", # Placeholder Cloudinary URL
+                    steps_count=1
+                )
+                db.add(default_cert)
+                await db.commit()
+        finally:
+            await db.close()
+            break
 
 @app.on_event("shutdown")
 async def on_shutdown():

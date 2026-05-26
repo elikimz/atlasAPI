@@ -38,6 +38,7 @@ class CertificationBase(BaseModel):
     name: str
     description: Optional[str] = None
     estimated_time: Optional[str] = None
+    video_url: Optional[str] = None
     steps_count: int = 0
     is_active: bool = True
 

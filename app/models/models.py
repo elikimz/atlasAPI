@@ -38,6 +38,7 @@ class Certification(Base):
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     estimated_time = Column(String, nullable=True)
+    video_url = Column(String, nullable=True)
     steps_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
 

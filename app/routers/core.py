@@ -223,7 +223,14 @@ async def get_certifications(
     response = []
     for cert in all_certs:
         status = user_certs.get(cert.id, "available")
-        response.append({"id": cert.id, "name": cert.name, "status": status})
+        response.append({
+            "id": cert.id, 
+            "name": cert.name, 
+            "description": cert.description,
+            "estimated_time": cert.estimated_time,
+            "video_url": cert.video_url,
+            "status": status
+        })
     
     return response
 
