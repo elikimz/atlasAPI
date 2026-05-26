@@ -89,3 +89,59 @@ async def get_all_video_tasks(
     result = await db.execute(select(VideoTask))
     video_tasks = result.scalars().all()
     return video_tasks
+
+@router.post("/admin/upload-training-video")
+async def upload_training_video(
+    name: str,
+    description: str,
+    estimated_time: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    try:
+        upload_result = cloudinary.uploader.upload(file.file, resource_type="video")
+        video_url = upload_result.get("secure_url")
+
+        if not video_url:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to upload video to Cloudinary")
+
+        from app.models.models import Certification
+        db_cert = Certification(
+            name=name,
+            description=description,
+            estimated_time=estimated_time,
+            video_url=video_url,
+            steps_count=1
+        )
+        db.add(db_cert)
+        await db.commit()
+        await db.refresh(db_cert)
+        return db_cert
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.get("/admin/certifications")
+async def get_admin_certifications(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Certification
+    result = await db.execute(select(Certification))
+    return result.scalars().all()
+
+@router.delete("/admin/certifications/{id}")
+async def delete_certification(
+    id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Certification
+    result = await db.execute(select(Certification).filter(Certification.id == id))
+    cert = result.scalar_one_or_none()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    await db.delete(cert)
+    await db.commit()
+    return {"message": "Certification deleted"}
