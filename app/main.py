@@ -47,6 +47,8 @@ async def on_startup():
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
             # Check for video_url in certifications
             await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
+            # Check for plan_purchase_price in users table
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_purchase_price FLOAT DEFAULT 0.0"))
         except Exception as e:
             print(f"Migration Notice (Safe to ignore if columns exist): {e}")
 
