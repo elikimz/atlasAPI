@@ -23,20 +23,35 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "elijahkimani1293@gmail.com")
 EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "cgxmrmncbazlwyzy")
 
-async def send_email(to_email: str, subject: str, body: str):
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = to_email
+import asyncio
 
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-            server.send_message(msg)
-    except Exception as e:
-        print(f"Failed to send email: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP email")
+async def send_email(to_email: str, subject: str, body: str):
+    def _send():
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_SENDER
+        msg["To"] = to_email
+
+        try:
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+                server.send_message(msg)
+            return True
+        except Exception as e:
+            print(f"SMTP ERROR: {e}")
+            return False
+
+    # Run the blocking SMTP operation in a thread to avoid blocking the event loop
+    loop = asyncio.get_event_loop()
+    success = await loop.run_in_executor(None, _send)
+    
+    if not success:
+        # We still want to let the user know, but maybe not crash the whole request
+        # if the DB part succeeded. However, for OTP, it's critical.
+        print(f"CRITICAL: Failed to send OTP email to {to_email}")
+        # We'll still raise for now so the frontend knows something is wrong
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send verification email. Please check your email address or try again later.")
 
 # Configuration for JWT
 SECRET_KEY = os.getenv("SECRET_KEY")
