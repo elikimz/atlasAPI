@@ -35,8 +35,10 @@ class OTP(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, index=True, nullable=False)
     otp_code = Column(String, nullable=False)
+    is_used = Column(Boolean, default=False) # New: track usage
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    ip_address = Column(String, nullable=True) # New: for security audit
 
 class Certification(Base):
     __tablename__ = "certifications"

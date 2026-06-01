@@ -3,9 +3,11 @@ from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
 import os
-from sqlalchemy import select, delete, func
-
-from fastapi import APIRouter, Depends, HTTPException, status
+import random
+import string
+import asyncio
+from sqlalchemy import select, delete, func, desc
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -13,53 +15,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_async_db
 from app.models import models
-import random
 
 router = APIRouter()
 
-# Email configuration
+# --- Configuration ---
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "elijahkimani1293@gmail.com")
 EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "cgxmrmncbazlwyzy")
 
-import asyncio
-
-async def send_email(to_email: str, subject: str, body: str):
-    def _send():
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_SENDER
-        msg["To"] = to_email
-
-        try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-                server.starttls()
-                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
-                server.send_message(msg)
-            return True
-        except Exception as e:
-            print(f"SMTP ERROR: {e}")
-            return False
-
-    # Run the blocking SMTP operation in a thread to avoid blocking the event loop
-    loop = asyncio.get_event_loop()
-    success = await loop.run_in_executor(None, _send)
-    
-    if not success:
-        # We still want to let the user know, but maybe not crash the whole request
-        # if the DB part succeeded. However, for OTP, it's critical.
-        print(f"CRITICAL: Failed to send OTP email to {to_email}")
-        # We'll still raise for now so the frontend knows something is wrong
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send verification email. Please check your email address or try again later.")
-
-# Configuration for JWT
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440))
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
+# --- Schemas ---
 class OTPRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -74,40 +45,43 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-class UserInDB(BaseModel):
-    id: int
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    is_admin: bool = False
-    deposit_wallet_balance: float = 0.0
-    withdrawal_wallet_balance: float = 0.0
+# --- Helpers ---
+async def send_email(to_email: str, subject: str, body: str):
+    """Asynchronous, non-blocking email sender."""
+    def _send():
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_SENDER
+        msg["To"] = to_email
+        try:
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+                server.send_message(msg)
+            return True
+        except Exception as e:
+            print(f"ARCH-LOG [SMTP ERROR]: {e}")
+            return False
 
-    class Config:
-        from_attributes = True
-
-
-class WalletBalances(BaseModel):
-    deposit_wallet_balance: float
-    withdrawal_wallet_balance: float
-
-    class Config:
-        from_attributes = True
+    loop = asyncio.get_event_loop()
+    success = await loop.run_in_executor(None, _send)
+    if not success:
+        print(f"ARCH-LOG [CRITICAL]: Failed to send email to {to_email}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Failed to send verification email. Please try again in a few minutes."
+        )
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_async_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Session expired. Please log in again.",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -117,212 +91,162 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = await db.execute(select(models.User).filter(models.User.email == email))
-    user = user.scalar_one_or_none()
+    
+    result = await db.execute(select(models.User).filter(models.User.email == email))
+    user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
     return user
 
-@router.post("/auth/login", response_model=dict)
-async def login_otp(otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
+# --- Auth Endpoints ---
+
+@router.post("/auth/login")
+async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession = Depends(get_async_db)):
+    """Robust Login/Registration Flow."""
+    email = otp_request.email.strip().lower()
+    print(f"ARCH-LOG [LOGIN ATTEMPT]: {email}")
+
     try:
-        email = otp_request.email.strip().lower()
+        # 1. Handle User Existence
         user_result = await db.execute(select(models.User).filter(models.User.email == email))
         user = user_result.scalar_one_or_none()
 
         if not user:
-            # Check if names are provided for new user registration
             if not otp_request.first_name or not otp_request.last_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Account not found. Please provide your first and last name to register."
                 )
-            # New user: create with provided details
+            
+            # Create new user
             user = models.User(
                 email=email,
                 first_name=otp_request.first_name.strip(),
                 last_name=otp_request.last_name.strip(),
                 is_admin=(email == "elijahkimani1293@gmail.com")
             )
+            
+            # Generate referral code for new user
+            random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+            user.referral_code = random_code
+            
             db.add(user)
-            await db.commit()
-            await db.refresh(user)
+            await db.flush() # Get user.id
 
-            # Record referral if provided (wrapped in try/except for 100% safety)
+            # Handle Referral Relationship
             if otp_request.referral_code:
-                try:
-                    referral_result = await db.execute(
-                        select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip())
+                ref_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == otp_request.referral_code.strip()))
+                referral = ref_result.scalar_one_or_none()
+                if referral:
+                    relationship = models.ReferralRelationship(
+                        user_id=user.id,
+                        referrer_id=referral.user_id,
+                        referral_code_used=otp_request.referral_code.strip()
                     )
-                    referral = referral_result.scalar_one_or_none()
-                    if referral:
-                        relationship = models.ReferralRelationship(
-                            user_id=user.id,
-                            referrer_id=referral.user_id,
-                            referral_code_used=otp_request.referral_code.strip()
-                        )
-                        db.add(relationship)
-                        referral.signups_count = (referral.signups_count or 0) + 1
-                        await db.commit()
-                except Exception:
-                    await db.rollback()
+                    db.add(relationship)
+                    referral.signups_count = (referral.signups_count or 0) + 1
         else:
-            # Returning user: update name fields only if provided and user doesn't have them
+            # Update names for returning users if missing
             if otp_request.first_name and not user.first_name:
                 user.first_name = otp_request.first_name.strip()
             if otp_request.last_name and not user.last_name:
                 user.last_name = otp_request.last_name.strip()
-            if otp_request.email == "elijahkimani1293@gmail.com":
-                user.is_admin = True
             
-            # --- Auto-generate Referral Code for user if they don't have one ---
-            if not getattr(user, "referral_code", None):
-                import string
-                random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-                while (await db.execute(select(models.User).filter(models.User.referral_code == random_code))).scalar_one_or_none():
-                    random_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-                user.referral_code = random_code
+            # Ensure returning user has a referral code record
+            if not user.referral_code:
+                user.referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
             
-            # Ensure a record exists in the referral_codes table as well
-            ref_code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
-            if not ref_code_result.scalar_one_or_none():
-                new_ref_code = models.ReferralCode(user_id=user.id, code=user.referral_code)
-                db.add(new_ref_code)
-                
-            await db.commit()
+        # Ensure a record exists in the referral_codes table
+        ref_code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
+        if not ref_code_result.scalar_one_or_none():
+            db.add(models.ReferralCode(user_id=user.id, code=user.referral_code))
 
-        # Delete any existing OTPs for this email first to avoid confusion
+        # 2. Atomic OTP Generation
+        # Invalidate old OTPs
         await db.execute(delete(models.OTP).filter(models.OTP.email == email))
-        await db.commit()
-
+        
         otp_code = str(random.randint(100000, 999999))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-
+        
         otp_entry = models.OTP(
             email=email,
             otp_code=otp_code,
-            expires_at=expires_at
+            expires_at=expires_at,
+            ip_address=request.client.host if request.client else None
         )
-
         db.add(otp_entry)
+        
+        # Commit all changes (User creation/update + OTP generation)
         await db.commit()
+        print(f"ARCH-LOG [OTP GENERATED]: {otp_code} for {email}")
 
-        # ONLY send email if DB save succeeded
+        # 3. Send Email (Non-blocking)
         await send_email(
             email,
-            "Your OTP for Adpulse Capture",
-            f"Your verification code is: {otp_code}"
+            "Your Verification Code - Adpulse AI",
+            f"Your verification code is: {otp_code}\n\nThis code will expire in 15 minutes."
         )
 
-        return {"message": "OTP sent to email"}
+        return {"message": "Verification code sent to your email."}
+
     except HTTPException as he:
+        await db.rollback()
         raise he
     except Exception as e:
-        print(f"CRITICAL LOGIN ERROR: {e}")
+        await db.rollback()
+        print(f"ARCH-LOG [LOGIN CRASH]: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login system error: {str(e)}"
+            detail="An unexpected error occurred. Our team has been notified."
         )
-
 
 @router.post("/auth/verify", response_model=Token)
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
+    """State-based OTP Verification."""
     email = otp_verify.email.strip().lower()
-    clean_otp = otp_verify.otp_code.strip()
-    
-    # Check if OTP exists for this email and code
-    from sqlalchemy import desc
-    # Try case-insensitive email match just in case
-    otp_result = await db.execute(
+    code = otp_verify.otp_code.strip()
+    now = datetime.now(timezone.utc)
+
+    # 1. Fetch latest unused OTP for this email
+    result = await db.execute(
         select(models.OTP)
-        .filter(func.lower(models.OTP.email) == email, models.OTP.otp_code == clean_otp)
-        .order_by(desc(models.OTP.id))
+        .filter(func.lower(models.OTP.email) == email, models.OTP.is_used == False)
+        .order_by(desc(models.OTP.created_at))
     )
-    otp_entry = otp_result.scalars().first()
+    otp_entry = result.scalars().first()
 
     if not otp_entry:
-        # Diagnostic: Check if ANY OTP exists for this email to provide better error
-        any_otp_result = await db.execute(
-            select(models.OTP).filter(func.lower(models.OTP.email) == email).order_by(desc(models.OTP.id))
-        )
-        latest_otps = any_otp_result.scalars().all()
-        
-        if latest_otps:
-            codes_found = [o.otp_code for o in latest_otps]
-            print(f"DEBUG: Found OTPs {codes_found} for {email}, but user provided {clean_otp}")
-            # FALLBACK: If the user provided the latest code but it didn't match exactly (e.g. whitespace or string type issue)
-            # though we already cleaned it. Let's be extra sure.
-            if clean_otp in codes_found:
-                otp_entry = next(o for o in latest_otps if o.otp_code == clean_otp)
-                print(f"DEBUG: Fallback matched OTP {clean_otp} for {email}")
-            else:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"[V5] Invalid code. We found {len(latest_otps)} codes for this email, but none matched '{clean_otp}'.")
-        else:
-            print(f"DEBUG: No OTP found at all for {email}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="[V5] No verification code found. Please request a new one.")
-    
-    # 60-minute safety window
-    current_time = datetime.now(timezone.utc)
-    
-    # Ensure created_at is timezone-aware for comparison
-    created_at = otp_entry.created_at
-    if created_at is None:
-        created_at = current_time
-    elif created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    else:
-        # Convert to UTC if it's already timezone-aware but in a different zone
-        created_at = created_at.astimezone(timezone.utc)
-    
-    if (current_time - created_at) > timedelta(minutes=60):
-        await db.delete(otp_entry)
-        await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired")
+        print(f"ARCH-LOG [VERIFY FAIL]: No active OTP for {email}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active verification code found. Please request a new one.")
 
-    user = await db.execute(select(models.User).filter(models.User.email == email))
-    user = user.scalar_one_or_none()
+    # 2. Validate Code
+    if otp_entry.otp_code != code:
+        print(f"ARCH-LOG [VERIFY FAIL]: Mismatch for {email}. Got {code}, expected {otp_entry.otp_code}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect verification code.")
+
+    # 3. Validate Expiration
+    # Ensure created_at/expires_at are UTC
+    created_at = otp_entry.created_at.replace(tzinfo=timezone.utc) if otp_entry.created_at.tzinfo is None else otp_entry.created_at
+    if (now - created_at) > timedelta(minutes=60):
+        print(f"ARCH-LOG [VERIFY FAIL]: Expired for {email}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Please request a new one.")
+
+    # 4. Mark as used and generate Token
+    otp_entry.is_used = True
+    
+    user_result = await db.execute(select(models.User).filter(models.User.email == email))
+    user = user_result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User account error.")
 
-    # OTP is valid, delete it and create access token
-    await db.delete(otp_entry)
     await db.commit()
+    print(f"ARCH-LOG [VERIFY SUCCESS]: {email}")
 
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email},
-        expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
-
-
-
-async def calculate_dynamic_withdrawal_balance(user_id: int, db: AsyncSession) -> float:
-    """Calculate real withdrawal balance by summing all earned rewards and rebates."""
-    # 1. Sum rewards from completed tasks
-    task_result = await db.execute(
-        select(func.sum(models.VideoTask.reward_amount))
-        .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
-        .filter(models.UserVideoTask.user_id == user_id, models.UserVideoTask.status == "completed")
-    )
-    task_earnings = task_result.scalar() or 0.0
-    
-    # 2. Sum referral rebates (stored on ReferralCode for this user)
-    referral_earnings = 0.0
-    try:
-        code_result = await db.execute(
-            select(func.sum(models.ReferralCode.earned_amount + models.ReferralCode.task_rebate_amount))
-            .filter(models.ReferralCode.user_id == user_id)
-        )
-        referral_earnings = code_result.scalar() or 0.0
-    except Exception as e:
-        print(f"Safe Balance Calc Error: {e}")
-    
-    return float(task_earnings + referral_earnings)
 
 @router.get("/auth/me")
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
-    # Safely convert current_plan to dict if it exists
     plan_data = None
     if current_user.current_plan:
         plan_data = {
@@ -353,7 +277,6 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
 
 @router.get("/wallet/balances")
 async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
-    """Get the current user's deposit and withdrawal wallet balances."""
     return {
         "deposit_wallet_balance": current_user.deposit_wallet_balance,
         "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
