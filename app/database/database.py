@@ -26,7 +26,13 @@ def normalize_database_url(database_url: str) -> str:
 DATABASE_URL = normalize_database_url(DATABASE_URL)
 
 # SSL context for hosted PostgreSQL providers that require SSL connections.
-ssl_context = ssl.create_default_context()
+# For asyncpg, we can use "ssl": "require" or "ssl": True if standard context fails
+connect_args = {}
+if "neon.tech" in DATABASE_URL or "sslmode" in DATABASE_URL:
+    connect_args["ssl"] = "require"
+else:
+    ssl_context = ssl.create_default_context()
+    connect_args["ssl"] = ssl_context
 
 # Async engine configuration:
 # - pool_pre_ping checks a pooled connection before handing it to a request.
@@ -39,7 +45,7 @@ engine = create_async_engine(
     pool_recycle=300,
     pool_size=5,
     max_overflow=10,
-    connect_args={"ssl": ssl_context},
+    connect_args=connect_args,
 )
 
 # SessionMaker
