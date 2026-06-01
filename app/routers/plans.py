@@ -13,7 +13,7 @@ router = APIRouter(
     tags=["plans"]
 )
 
-@router.get("/", response_model=list[plan_schemas.Plan])
+@router.get("", response_model=list[plan_schemas.Plan])
 async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
     result = await db.execute(select(models.Plan))
     plans = result.scalars().all()
