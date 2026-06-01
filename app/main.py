@@ -56,6 +56,7 @@ async def on_startup():
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_date TIMESTAMP WITH TIME ZONE"))
 
         # Seed default plans if none exist
+        from app.database.database import get_async_db
         async for db in get_async_db():
             try:
                 # Check if any plans exist
