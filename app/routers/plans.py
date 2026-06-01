@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from app.database.database import get_async_db
 from app.models import models
 from app.schemas import plan as plan_schemas
-from app.core.security import get_current_active_user
+from app.routers.auth import get_current_user as get_current_active_user
 
 router = APIRouter(
     prefix="/plans",
