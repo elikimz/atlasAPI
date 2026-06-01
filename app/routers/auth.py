@@ -232,15 +232,26 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     
     # Check if OTP exists for this email and code
     from sqlalchemy import desc
+    # Try case-insensitive email match just in case
     otp_result = await db.execute(
         select(models.OTP)
-        .filter(models.OTP.email == email, models.OTP.otp_code == clean_otp)
+        .filter(func.lower(models.OTP.email) == email, models.OTP.otp_code == clean_otp)
         .order_by(desc(models.OTP.id))
     )
     otp_entry = otp_result.scalars().first()
 
     if not otp_entry:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
+        # Diagnostic: Check if ANY OTP exists for this email to provide better error
+        any_otp_result = await db.execute(
+            select(models.OTP).filter(func.lower(models.OTP.email) == email).order_by(desc(models.OTP.id))
+        )
+        latest_otp = any_otp_result.scalars().first()
+        if latest_otp:
+            print(f"DEBUG: Found OTP {latest_otp.otp_code} for {email}, but user provided {clean_otp}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code. Please use the most recent code sent to your email.")
+        else:
+            print(f"DEBUG: No OTP found at all for {email}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found for this email. Please request a new one.")
     
     # 60-minute safety window
     current_time = datetime.now(timezone.utc)
