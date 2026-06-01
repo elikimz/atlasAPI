@@ -229,11 +229,16 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     
     # 60-minute safety window
     current_time = datetime.now(timezone.utc)
+    
+    # Ensure created_at is timezone-aware for comparison
     created_at = otp_entry.created_at
     if created_at is None:
-        created_at = datetime.now(timezone.utc)
+        created_at = current_time
     elif created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    else:
+        # Convert to UTC if it's already timezone-aware but in a different zone
+        created_at = created_at.astimezone(timezone.utc)
     
     if (current_time - created_at) > timedelta(minutes=60):
         await db.delete(otp_entry)
