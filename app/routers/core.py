@@ -165,18 +165,24 @@ async def get_dashboard_summary(
     completed_certs = cert_result.scalar() or 0
     
     # Count active (available) tasks
-    all_tasks_result = await db.execute(select(models.VideoTask))
-    all_tasks = all_tasks_result.scalars().all()
+    try:
+        all_tasks_result = await db.execute(select(models.VideoTask))
+        all_tasks = all_tasks_result.scalars().all()
+    except Exception:
+        all_tasks = []
     
-    uvt_result = await db.execute(
-        select(models.UserVideoTask).filter(
-            models.UserVideoTask.user_id == current_user.id
+    try:
+        uvt_result = await db.execute(
+            select(models.UserVideoTask).filter(
+                models.UserVideoTask.user_id == current_user.id
+            )
         )
-    )
-    user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
+        user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
+    except Exception:
+        user_tasks = {}
     
     completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
-    active_tasks_count = len(all_tasks) - completed_tasks_count
+    active_tasks_count = max(0, len(all_tasks) - completed_tasks_count)
     pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
 
     # Get recent activity
