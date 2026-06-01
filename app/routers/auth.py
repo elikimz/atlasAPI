@@ -283,6 +283,20 @@ async def calculate_dynamic_withdrawal_balance(user_id: int, db: AsyncSession) -
 
 @router.get("/auth/me")
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
+    # Safely convert current_plan to dict if it exists
+    plan_data = None
+    if current_user.current_plan:
+        plan_data = {
+            "id": current_user.current_plan.id,
+            "name": current_user.current_plan.name,
+            "price": current_user.current_plan.price,
+            "daily_tasks_limit": current_user.current_plan.daily_tasks_limit,
+            "validity_days": current_user.current_plan.validity_days,
+            "description": current_user.current_plan.description,
+            "is_active": current_user.current_plan.is_active,
+            "is_upgrade_only": current_user.current_plan.is_upgrade_only
+        }
+        
     return {
         "id": current_user.id,
         "email": current_user.email,
@@ -295,7 +309,7 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "current_plan_id": current_user.current_plan_id,
         "plan_start_date": current_user.plan_start_date,
         "plan_expiry_date": current_user.plan_expiry_date,
-        "current_plan": current_user.current_plan
+        "current_plan": plan_data
     }
 
 @router.get("/wallet/balances")
