@@ -89,10 +89,10 @@ async def get_active_referrals(
         async def get_user_status_and_activity(user_id):
             # Check if user has an active plan
             plan_result = await db.execute(
-                select(models.UserPlan).filter(
-                    models.UserPlan.user_id == user_id,
-                    models.UserPlan.status == "active",
-                    models.UserPlan.expires_at > datetime.now(timezone.utc)
+                select(models.UserPlanHistory).filter(
+                    models.UserPlanHistory.user_id == user_id,
+                    models.UserPlanHistory.status == "active",
+                    models.UserPlanHistory.expires_at > datetime.now(timezone.utc)
                 )
             )
             has_active_plan = plan_result.scalars().first() is not None
@@ -294,7 +294,7 @@ class PlanPurchase(BaseModel):
 
 @router.get("/plans", response_model=List[dict])
 async def get_plans(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.InvestmentPlan).filter(models.InvestmentPlan.is_active == True))
+    result = await db.execute(select(models.Plan).filter(models.Plan.is_active == True))
     plans = result.scalars().all()
     return [
         {
@@ -314,7 +314,7 @@ async def purchase_plan(
     db: AsyncSession = Depends(get_async_db)
 ):
     # 1. Fetch the plan
-    plan_result = await db.execute(select(models.InvestmentPlan).filter(models.InvestmentPlan.id == purchase.plan_id))
+    plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == purchase.plan_id))
     plan = plan_result.scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -328,7 +328,7 @@ async def purchase_plan(
     setattr(current_user, "deposit_wallet_balance", current_deposit - plan.price)
     
     # 4. Create UserPlan record
-    new_user_plan = models.UserPlan(
+    new_user_plan = models.UserPlanHistory(
         user_id=current_user.id,
         plan_id=plan.id,
         purchase_price=plan.price,
