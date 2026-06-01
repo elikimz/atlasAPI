@@ -245,13 +245,21 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
         any_otp_result = await db.execute(
             select(models.OTP).filter(func.lower(models.OTP.email) == email).order_by(desc(models.OTP.id))
         )
-        latest_otp = any_otp_result.scalars().first()
-        if latest_otp:
-            print(f"DEBUG: Found OTP {latest_otp.otp_code} for {email}, but user provided {clean_otp}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code. Please use the most recent code sent to your email.")
+        latest_otps = any_otp_result.scalars().all()
+        
+        if latest_otps:
+            codes_found = [o.otp_code for o in latest_otps]
+            print(f"DEBUG: Found OTPs {codes_found} for {email}, but user provided {clean_otp}")
+            # FALLBACK: If the user provided the latest code but it didn't match exactly (e.g. whitespace or string type issue)
+            # though we already cleaned it. Let's be extra sure.
+            if clean_otp in codes_found:
+                otp_entry = next(o for o in latest_otps if o.otp_code == clean_otp)
+                print(f"DEBUG: Fallback matched OTP {clean_otp} for {email}")
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid code. We found {len(latest_otps)} codes for this email, but none matched '{clean_otp}'.")
         else:
             print(f"DEBUG: No OTP found at all for {email}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found for this email. Please request a new one.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found. Please request a new one.")
     
     # 60-minute safety window
     current_time = datetime.now(timezone.utc)
