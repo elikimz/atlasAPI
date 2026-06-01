@@ -53,13 +53,40 @@ async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: 
 
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
 async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
+    # 1. Check Plan Validity
+    if not current_user.current_plan_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No active plan found. Please purchase a plan to start earning.")
+    
+    if current_user.plan_expiry_date and current_user.plan_expiry_date < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your plan has expired. Please upgrade to a higher tier to continue earning.")
+
+    # 2. Check Daily Task Limit
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_count_result = await db.execute(
+        select(func.count(models.UserVideoTask.id))
+        .filter(
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.status == "completed",
+            models.UserVideoTask.completed_at >= today_start
+        )
+    )
+    tasks_completed_today = daily_count_result.scalar() or 0
+    
+    # Fetch plan details to get limit
+    plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
+    plan = plan_result.scalar_one_or_none()
+    
+    if plan and tasks_completed_today >= plan.daily_tasks_limit:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks).")
+
+    # 3. Process Task Completion
     vt_result = await db.execute(select(models.VideoTask).filter(models.VideoTask.id == task_completion.video_task_id))
     video_task = vt_result.scalar_one_or_none()
     
     if not video_task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video task not found")
 
-    # Check if user has already completed this task
+    # Check if user has already completed this specific task (regardless of daily limit)
     uvt_result = await db.execute(
         select(models.UserVideoTask).filter(
             models.UserVideoTask.user_id == current_user.id,
