@@ -291,7 +291,11 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "is_admin": current_user.is_admin,
         "deposit_wallet_balance": current_user.deposit_wallet_balance,
         "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
-        "referral_code": current_user.referral_code
+        "referral_code": current_user.referral_code,
+        "current_plan_id": current_user.current_plan_id,
+        "plan_start_date": current_user.plan_start_date,
+        "plan_expiry_date": current_user.plan_expiry_date,
+        "current_plan": current_user.current_plan
     }
 
 @router.get("/wallet/balances")
