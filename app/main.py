@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-from app.routers import auth, core, extra, admin
+from sqlalchemy import select
+from app.routers import auth, core, extra, admin, plans
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 
@@ -19,6 +20,7 @@ app.include_router(auth.router)
 app.include_router(core.router)
 app.include_router(extra.router)
 app.include_router(admin.router)
+app.include_router(plans.router)
 
 
 @app.on_event("startup")
@@ -47,6 +49,32 @@ async def on_startup():
             await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
         except Exception as e:
             print(f"Migration Notice (Safe to ignore if columns exist): {e}")
+
+        # Add new columns for plan management
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_plan_id INTEGER"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_start_date TIMESTAMP WITH TIME ZONE"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_date TIMESTAMP WITH TIME ZONE"))
+
+        # Seed default plans if none exist
+        async for db in get_async_db():
+            try:
+                # Check if any plans exist
+                result = await db.execute(select(models.Plan))
+                if not result.scalar_one_or_none():
+                    default_plans_data = [
+                        {"name": "Intern", "price": 0.0, "daily_tasks_limit": 2, "validity_days": 3, "description": "Free Trial", "is_upgrade_only": False},
+                        {"name": "LV1", "price": 20.0, "daily_tasks_limit": 2, "validity_days": 60, "description": "Level 1 Plan", "is_upgrade_only": False},
+                        {"name": "LV2", "price": 50.0, "daily_tasks_limit": 5, "validity_days": 60, "description": "Level 2 Plan", "is_upgrade_only": False},
+                        {"name": "LV3", "price": 100.0, "daily_tasks_limit": 7, "validity_days": 60, "description": "Level 3 Plan", "is_upgrade_only": False},
+                        {"name": "LV4", "price": 150.0, "daily_tasks_limit": 10, "validity_days": 60, "description": "Level 4 Plan", "is_upgrade_only": False}
+                    ]
+                    for plan_data in default_plans_data:
+                        plan = models.Plan(**plan_data)
+                        db.add(plan)
+                    await db.commit()
+            finally:
+                await db.close()
+                break
 
     # Seed default training if none exists
     from app.database.database import get_async_db

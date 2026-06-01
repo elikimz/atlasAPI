@@ -14,6 +14,11 @@ class User(Base):
     withdrawal_wallet_balance = Column(Float, default=0.0)
     referral_code = Column(String, unique=True, index=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # New plan-related fields
+    current_plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
+    plan_start_date = Column(DateTime(timezone=True), nullable=True)
+    plan_expiry_date = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
@@ -21,6 +26,7 @@ class User(Base):
     payments = relationship("Payment", back_populates="user")
     evaluations = relationship("Evaluation", back_populates="user")
     video_tasks = relationship("UserVideoTask", back_populates="user")
+    current_plan = relationship("Plan", foreign_keys=[current_plan_id])
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -136,8 +142,8 @@ class UserVideoTask(Base):
     user = relationship("User", back_populates="video_tasks")
     video_task = relationship("VideoTask")
 
-class InvestmentPlan(Base):
-    __tablename__ = "investment_plans"
+class Plan(Base):
+    __tablename__ = "plans"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
@@ -146,17 +152,19 @@ class InvestmentPlan(Base):
     validity_days = Column(Integer, default=30)
     description = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
+    is_upgrade_only = Column(Boolean, default=False) # New field
 
-class UserPlan(Base):
-    __tablename__ = "user_plans"
+class UserPlanHistory(Base):
+    __tablename__ = "user_plan_history"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    plan_id = Column(Integer, ForeignKey("investment_plans.id"))
+    plan_id = Column(Integer, ForeignKey("plans.id")) # Updated foreign key
     purchase_price = Column(Float, nullable=False)
     purchased_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    status = Column(String, default="active") # active, expired
+    status = Column(String, default="active") # active, expired, upgraded (New status)
+    refunded_amount = Column(Float, default=0.0) # New field
 
     user = relationship("User", backref="plans")
-    plan = relationship("InvestmentPlan")
+    plan = relationship("Plan") # Updated relationship
