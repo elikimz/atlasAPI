@@ -46,6 +46,10 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_upgrade_only BOOLEAN DEFAULT FALSE"))
             await conn.execute(text("ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             
+            # OTP table migrations
+            await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS is_used BOOLEAN DEFAULT FALSE"))
+            await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR"))
+            
             print("✅ Startup migrations completed successfully.")
         except Exception as e:
             print(f"⚠️ Migration Notice (Safe to ignore if columns exist): {e}")

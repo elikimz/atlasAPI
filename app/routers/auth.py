@@ -226,8 +226,8 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
 
     # 3. Validate Expiration
     # Ensure created_at/expires_at are UTC
-    created_at = otp_entry.created_at.replace(tzinfo=timezone.utc) if otp_entry.created_at.tzinfo is None else otp_entry.created_at
-    if (now - created_at) > timedelta(minutes=60):
+    expires_at = otp_entry.expires_at.replace(tzinfo=timezone.utc) if otp_entry.expires_at.tzinfo is None else otp_entry.expires_at
+    if now > expires_at:
         print(f"ARCH-LOG [VERIFY FAIL]: Expired for {email}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired. Please request a new one.")
 
