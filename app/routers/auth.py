@@ -256,10 +256,10 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
                 otp_entry = next(o for o in latest_otps if o.otp_code == clean_otp)
                 print(f"DEBUG: Fallback matched OTP {clean_otp} for {email}")
             else:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid code. We found {len(latest_otps)} codes for this email, but none matched '{clean_otp}'.")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"[V5] Invalid code. We found {len(latest_otps)} codes for this email, but none matched '{clean_otp}'.")
         else:
             print(f"DEBUG: No OTP found at all for {email}")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No verification code found. Please request a new one.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="[V5] No verification code found. Please request a new one.")
     
     # 60-minute safety window
     current_time = datetime.now(timezone.utc)
