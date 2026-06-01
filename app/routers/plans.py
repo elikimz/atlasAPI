@@ -32,8 +32,16 @@ async def purchase_plan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
     # Check if user already has an active plan
-    if current_user.current_plan_id:
+    if current_user.current_plan_id and current_user.plan_expiry_date > datetime.utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already has an active plan. Please upgrade instead.")
+    
+    # If the user had a plan that expired, they MUST upgrade to a higher tier
+    if current_user.current_plan_id and current_user.plan_expiry_date <= datetime.utcnow():
+        # Fetch the expired plan details
+        expired_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
+        expired_plan = expired_result.scalar_one_or_none()
+        if expired_plan and plan.price <= expired_plan.price:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Your previous plan has expired. You must upgrade to a higher tier.")
 
     # Check if user has enough balance
     if current_user.deposit_wallet_balance < plan.price:
@@ -44,6 +52,7 @@ async def purchase_plan(
 
     # Update user's current plan details
     current_user.current_plan_id = plan.id
+    current_user.plan_purchase_price = plan.price
     current_user.plan_start_date = datetime.utcnow()
     current_user.plan_expiry_date = datetime.utcnow() + timedelta(days=plan.validity_days)
 
@@ -124,6 +133,7 @@ async def upgrade_plan(
 
         # 3. Update user's current plan details to the new plan
         current_user.current_plan_id = new_plan.id
+        current_user.plan_purchase_price = new_plan.price
         current_user.plan_start_date = datetime.utcnow()
         current_user.plan_expiry_date = datetime.utcnow() + timedelta(days=new_plan.validity_days)
 

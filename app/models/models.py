@@ -19,6 +19,7 @@ class User(Base):
     current_plan_id = Column(Integer, ForeignKey("plans.id"), nullable=True)
     plan_start_date = Column(DateTime(timezone=True), nullable=True)
     plan_expiry_date = Column(DateTime(timezone=True), nullable=True)
+    plan_purchase_price = Column(Float, default=0.0)
 
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
