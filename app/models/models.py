@@ -167,5 +167,5 @@ class UserPlanHistory(Base):
     status = Column(String, default="active") # active, expired, upgraded (New status)
     refunded_amount = Column(Float, default=0.0) # New field
 
-    user = relationship("User", backref="plans")
+    user = relationship("User", backref="plan_history")
     plan = relationship("Plan") # Updated relationship
