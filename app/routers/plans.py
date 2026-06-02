@@ -132,17 +132,19 @@ async def upgrade_plan(
     old_user_plan_entry = result.scalar_one_or_none()
     refund_amount = old_user_plan_entry.purchase_price if old_user_plan_entry else current_user.plan_purchase_price or 0.0
 
-    # Upgrades should require only the net additional amount after the old plan refund,
-    # not the full new plan price. This prevents valid upgrades from being refused.
-    required_balance = max(new_plan.price - refund_amount, 0.0)
-    if current_user.deposit_wallet_balance < required_balance:
+    # Upgrades now require the full new plan price from the deposit wallet,
+    # and the old plan price is refunded to the performance bonus balance.
+    if current_user.deposit_wallet_balance < new_plan.price:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Insufficient balance to upgrade to this plan. Required additional balance: {required_balance:.2f}."
+            detail=f"Insufficient balance to upgrade. You need the full price of the new plan ({new_plan.price:.2f}) in your deposit wallet. The previous plan price ({refund_amount:.2f}) will be refunded to your performance bonus balance."
         )
 
     now = _utc_now()
-    current_user.deposit_wallet_balance = current_user.deposit_wallet_balance - new_plan.price + refund_amount
+    # Charge full price from deposit wallet
+    current_user.deposit_wallet_balance -= new_plan.price
+    # Refund previous plan price to performance bonus balance
+    current_user.performance_bonus_balance = (current_user.performance_bonus_balance or 0.0) + refund_amount
 
     if old_user_plan_entry:
         old_user_plan_entry.status = "upgraded"

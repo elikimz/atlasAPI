@@ -29,6 +29,7 @@ async def run_migrations():
             # Users table migrations
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_wallet_balance FLOAT DEFAULT 0.0"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_wallet_balance FLOAT DEFAULT 0.0"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS performance_bonus_balance FLOAT DEFAULT 0.0"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_plan_id INTEGER"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_start_date TIMESTAMP WITH TIME ZONE"))
