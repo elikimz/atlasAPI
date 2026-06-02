@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
 
 from app.database.database import get_async_db
@@ -68,7 +69,15 @@ async def purchase_plan(
     )
     db.add(user_plan_history)
     await db.commit()
-    await db.refresh(current_user)
+    
+    # Eagerly reload user with plan to avoid lazy-loading issues in subsequent requests
+    result = await db.execute(
+        select(models.User)
+        .options(selectinload(models.User.current_plan))
+        .filter(models.User.id == current_user.id)
+    )
+    current_user = result.scalar_one()
+    
     await db.refresh(user_plan_history)
 
     return user_plan_history
@@ -151,7 +160,15 @@ async def upgrade_plan(
 
         db.add(current_user)
         await db.commit()
-        await db.refresh(current_user)
+        
+        # Eagerly reload user with plan to avoid lazy-loading issues in subsequent requests
+        result = await db.execute(
+            select(models.User)
+            .options(selectinload(models.User.current_plan))
+            .filter(models.User.id == current_user.id)
+        )
+        current_user = result.scalar_one()
+        
         await db.refresh(new_user_plan_history)
 
     return new_user_plan_history

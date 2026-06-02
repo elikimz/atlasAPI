@@ -7,6 +7,7 @@ import random
 import string
 import asyncio
 from sqlalchemy import select, delete, func, desc
+from sqlalchemy.orm import selectinload
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -92,7 +93,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     except JWTError:
         raise credentials_exception
     
-    result = await db.execute(select(models.User).filter(models.User.email == email))
+    result = await db.execute(
+        select(models.User)
+        .options(selectinload(models.User.current_plan))
+        .filter(models.User.email == email)
+    )
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
