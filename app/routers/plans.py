@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.database.database import get_async_db
 from app.models import models
@@ -14,11 +14,35 @@ router = APIRouter(
     tags=["plans"]
 )
 
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _plan_is_active(user: models.User) -> bool:
+    expiry_date = _as_utc(user.plan_expiry_date)
+    return bool(user.current_plan_id and expiry_date and expiry_date > _utc_now())
+
+
+def _plan_is_expired(user: models.User) -> bool:
+    expiry_date = _as_utc(user.plan_expiry_date)
+    return bool(user.current_plan_id and (expiry_date is None or expiry_date <= _utc_now()))
+
+
 @router.get("", response_model=list[plan_schemas.Plan])
 async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.Plan))
+    result = await db.execute(select(models.Plan).where(models.Plan.is_active == True))  # noqa: E712
     plans = result.scalars().all()
     return plans
+
 
 @router.post("/purchase/{plan_id}", response_model=plan_schemas.UserPlanHistory)
 async def purchase_plan(
@@ -26,38 +50,31 @@ async def purchase_plan(
     db: AsyncSession = Depends(get_async_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    # Fetch the plan details
     result = await db.execute(select(models.Plan).filter(models.Plan.id == plan_id))
     plan = result.scalar_one_or_none()
-    if not plan:
+    if not plan or not plan.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
-    # Check if user already has an active plan
-    if current_user.current_plan_id and current_user.plan_expiry_date > datetime.utcnow():
+    if _plan_is_active(current_user):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already has an active plan. Please upgrade instead.")
-    
-    # If the user had a plan that expired, they MUST upgrade to a higher tier
-    if current_user.current_plan_id and current_user.plan_expiry_date <= datetime.utcnow():
-        # Fetch the expired plan details
+
+    if _plan_is_expired(current_user):
         expired_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
         expired_plan = expired_result.scalar_one_or_none()
         if expired_plan and plan.price <= expired_plan.price:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Your previous plan has expired. You must upgrade to a higher tier.")
 
-    # Check if user has enough balance
-    if current_user.deposit_wallet_balance < plan.price:
+    # The Intern/free-trial plan has a zero price and must activate without money.
+    if plan.price > 0 and current_user.deposit_wallet_balance < plan.price:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient balance to purchase this plan")
 
-    # Deduct plan price from user's deposit wallet
+    now = _utc_now()
     current_user.deposit_wallet_balance -= plan.price
-
-    # Update user's current plan details
     current_user.current_plan_id = plan.id
     current_user.plan_purchase_price = plan.price
-    current_user.plan_start_date = datetime.utcnow()
-    current_user.plan_expiry_date = datetime.utcnow() + timedelta(days=plan.validity_days)
+    current_user.plan_start_date = now
+    current_user.plan_expiry_date = now + timedelta(days=plan.validity_days)
 
-    # Record plan purchase in history
     user_plan_history = models.UserPlanHistory(
         user_id=current_user.id,
         plan_id=plan.id,
@@ -68,19 +85,18 @@ async def purchase_plan(
         refunded_amount=0.0
     )
     db.add(user_plan_history)
+    db.add(current_user)
     await db.commit()
-    
-    # Eagerly reload user with plan to avoid lazy-loading issues in subsequent requests
-    result = await db.execute(
+
+    await db.refresh(user_plan_history)
+    await db.execute(
         select(models.User)
         .options(selectinload(models.User.current_plan))
         .filter(models.User.id == current_user.id)
     )
-    current_user = result.scalar_one()
-    
-    await db.refresh(user_plan_history)
 
     return user_plan_history
+
 
 @router.post("/upgrade/{new_plan_id}", response_model=plan_schemas.UserPlanHistory)
 async def upgrade_plan(
@@ -88,87 +104,74 @@ async def upgrade_plan(
     db: AsyncSession = Depends(get_async_db),
     current_user: models.User = Depends(get_current_active_user)
 ):
-    # Fetch new plan details
     result = await db.execute(select(models.Plan).filter(models.Plan.id == new_plan_id))
     new_plan = result.scalar_one_or_none()
-    if not new_plan:
+    if not new_plan or not new_plan.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="New plan not found")
 
-    # Check if user has an active plan to upgrade from
     if not current_user.current_plan_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active plan to upgrade from. Please purchase a plan first.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No existing plan to upgrade from. Please purchase a plan first.")
 
-    # Fetch current active plan details
     result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
-    current_active_plan = result.scalar_one_or_none()
-    if not current_active_plan:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Current active plan not found in database.")
+    current_plan = result.scalar_one_or_none()
+    if not current_plan:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Current plan not found in database.")
 
-    # Check if new plan is actually an upgrade (higher price)
-    if new_plan.price <= current_active_plan.price:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New plan must be a higher tier than the current active plan.")
+    if new_plan.price <= current_plan.price:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New plan must be a higher tier than the current plan.")
 
-    # Check if user has enough balance for the new plan (after potential refund)
-    # The refund of the old plan's price happens *after* the new plan's price deduction
-    # So, we check if current balance is enough for the new plan first.
-    if current_user.deposit_wallet_balance < new_plan.price:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient balance to upgrade to this plan.")
-
-    # Start transaction
-    async with db.begin():
-        # 1. Deduct new plan price from user's deposit wallet
-        current_user.deposit_wallet_balance -= new_plan.price
-
-        # 2. Refund the initial purchase price of the old plan
-        # Find the active entry in UserPlanHistory for the current_active_plan
-        result = await db.execute(
-            select(models.UserPlanHistory)
-            .filter(
-                models.UserPlanHistory.user_id == current_user.id,
-                models.UserPlanHistory.plan_id == current_active_plan.id,
-                models.UserPlanHistory.status == "active"
-            )
-            .order_by(models.UserPlanHistory.purchased_at.desc())
+    result = await db.execute(
+        select(models.UserPlanHistory)
+        .filter(
+            models.UserPlanHistory.user_id == current_user.id,
+            models.UserPlanHistory.plan_id == current_plan.id,
+            models.UserPlanHistory.status == "active"
         )
-        old_user_plan_entry = result.scalar_one_or_none()
+        .order_by(models.UserPlanHistory.purchased_at.desc())
+    )
+    old_user_plan_entry = result.scalar_one_or_none()
+    refund_amount = old_user_plan_entry.purchase_price if old_user_plan_entry else current_user.plan_purchase_price or 0.0
 
-        refund_amount = 0.0
-        if old_user_plan_entry:
-            refund_amount = old_user_plan_entry.purchase_price
-            current_user.deposit_wallet_balance += refund_amount
-            old_user_plan_entry.status = "upgraded"
-            old_user_plan_entry.refunded_amount = refund_amount
-            db.add(old_user_plan_entry)
-
-        # 3. Update user's current plan details to the new plan
-        current_user.current_plan_id = new_plan.id
-        current_user.plan_purchase_price = new_plan.price
-        current_user.plan_start_date = datetime.utcnow()
-        current_user.plan_expiry_date = datetime.utcnow() + timedelta(days=new_plan.validity_days)
-
-        # 4. Record new plan purchase in history
-        new_user_plan_history = models.UserPlanHistory(
-            user_id=current_user.id,
-            plan_id=new_plan.id,
-            purchase_price=new_plan.price,
-            purchased_at=current_user.plan_start_date,
-            expires_at=current_user.plan_expiry_date,
-            status="active",
-            refunded_amount=0.0 # New plan has no refund yet
+    # Upgrades should require only the net additional amount after the old plan refund,
+    # not the full new plan price. This prevents valid upgrades from being refused.
+    required_balance = max(new_plan.price - refund_amount, 0.0)
+    if current_user.deposit_wallet_balance < required_balance:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient balance to upgrade to this plan. Required additional balance: {required_balance:.2f}."
         )
-        db.add(new_user_plan_history)
 
-        db.add(current_user)
-        await db.commit()
-        
-        # Eagerly reload user with plan to avoid lazy-loading issues in subsequent requests
-        result = await db.execute(
-            select(models.User)
-            .options(selectinload(models.User.current_plan))
-            .filter(models.User.id == current_user.id)
-        )
-        current_user = result.scalar_one()
-        
-        await db.refresh(new_user_plan_history)
+    now = _utc_now()
+    current_user.deposit_wallet_balance = current_user.deposit_wallet_balance - new_plan.price + refund_amount
+
+    if old_user_plan_entry:
+        old_user_plan_entry.status = "upgraded"
+        old_user_plan_entry.refunded_amount = refund_amount
+        db.add(old_user_plan_entry)
+
+    current_user.current_plan_id = new_plan.id
+    current_user.plan_purchase_price = new_plan.price
+    current_user.plan_start_date = now
+    current_user.plan_expiry_date = now + timedelta(days=new_plan.validity_days)
+
+    new_user_plan_history = models.UserPlanHistory(
+        user_id=current_user.id,
+        plan_id=new_plan.id,
+        purchase_price=new_plan.price,
+        purchased_at=current_user.plan_start_date,
+        expires_at=current_user.plan_expiry_date,
+        status="active",
+        refunded_amount=0.0
+    )
+    db.add(new_user_plan_history)
+    db.add(current_user)
+    await db.commit()
+
+    await db.refresh(new_user_plan_history)
+    await db.execute(
+        select(models.User)
+        .options(selectinload(models.User.current_plan))
+        .filter(models.User.id == current_user.id)
+    )
 
     return new_user_plan_history

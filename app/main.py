@@ -58,20 +58,30 @@ async def seed_data():
     """Seed initial data if tables are empty."""
     async with AsyncSessionLocal() as db:
         try:
-            # Seed default plans
-            result = await db.execute(select(models.Plan))
-            if not result.scalars().first():
-                default_plans_data = [
-                    {"name": "Intern", "price": 0.0, "daily_tasks_limit": 2, "validity_days": 3, "description": "Free Trial", "is_upgrade_only": False},
-                    {"name": "LV1", "price": 20.0, "daily_tasks_limit": 2, "validity_days": 60, "description": "Level 1 Plan", "is_upgrade_only": False},
-                    {"name": "LV2", "price": 50.0, "daily_tasks_limit": 5, "validity_days": 60, "description": "Level 2 Plan", "is_upgrade_only": False},
-                    {"name": "LV3", "price": 100.0, "daily_tasks_limit": 7, "validity_days": 60, "description": "Level 3 Plan", "is_upgrade_only": False},
-                    {"name": "LV4", "price": 150.0, "daily_tasks_limit": 10, "validity_days": 60, "description": "Level 4 Plan", "is_upgrade_only": False}
-                ]
-                for plan_data in default_plans_data:
+            # Seed or normalize default plans. This intentionally updates existing
+            # rows too, so older databases keep Intern as a zero-cost free trial.
+            default_plans_data = [
+                {"name": "Intern", "price": 0.0, "daily_tasks_limit": 2, "validity_days": 3, "description": "Free Trial", "is_upgrade_only": False, "is_active": True},
+                {"name": "LV1", "price": 20.0, "daily_tasks_limit": 2, "validity_days": 60, "description": "Level 1 Plan", "is_upgrade_only": False, "is_active": True},
+                {"name": "LV2", "price": 50.0, "daily_tasks_limit": 5, "validity_days": 60, "description": "Level 2 Plan", "is_upgrade_only": False, "is_active": True},
+                {"name": "LV3", "price": 100.0, "daily_tasks_limit": 7, "validity_days": 60, "description": "Level 3 Plan", "is_upgrade_only": False, "is_active": True},
+                {"name": "LV4", "price": 150.0, "daily_tasks_limit": 10, "validity_days": 60, "description": "Level 4 Plan", "is_upgrade_only": False, "is_active": True}
+            ]
+            changed_plans = False
+            for plan_data in default_plans_data:
+                result = await db.execute(select(models.Plan).filter(models.Plan.name == plan_data["name"]))
+                existing_plan = result.scalar_one_or_none()
+                if existing_plan:
+                    for field, value in plan_data.items():
+                        if getattr(existing_plan, field) != value:
+                            setattr(existing_plan, field, value)
+                            changed_plans = True
+                else:
                     db.add(models.Plan(**plan_data))
+                    changed_plans = True
+            if changed_plans:
                 await db.commit()
-                print("✅ Default plans seeded.")
+                print("✅ Default plans seeded/updated.")
 
             # Seed default certification
             result = await db.execute(select(models.Certification).filter(models.Certification.name == "Video Reviewing Mastery"))
