@@ -42,7 +42,13 @@ async def upload_video(
     try:
         # Note: cloudinary upload is synchronous, but in a real async environment 
         # you might want to run this in a threadpool
-        upload_result = cloudinary.uploader.upload(file.file, resource_type="video")
+        upload_result = cloudinary.uploader.upload(
+            file.file, 
+            resource_type="video",
+            cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+            api_key=settings.CLOUDINARY_API_KEY,
+            api_secret=settings.CLOUDINARY_API_SECRET
+        )
         video_url = upload_result.get("secure_url")
 
         if not video_url:
@@ -101,7 +107,13 @@ async def upload_training_video(
     current_user: User = Depends(get_current_admin_user)
 ):
     try:
-        upload_result = cloudinary.uploader.upload(file.file, resource_type="video")
+        upload_result = cloudinary.uploader.upload(
+            file.file, 
+            resource_type="video",
+            cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+            api_key=settings.CLOUDINARY_API_KEY,
+            api_secret=settings.CLOUDINARY_API_SECRET
+        )
         video_url = upload_result.get("secure_url")
 
         if not video_url:
