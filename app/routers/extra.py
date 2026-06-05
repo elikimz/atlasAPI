@@ -298,9 +298,16 @@ async def upload_payment_proof(
 ):
     try:
         import cloudinary.uploader
-        upload_result = cloudinary.uploader.upload(file.file, folder="payment_proofs")
+        # Note: Added folder "payment_proofs" and using synchronous upload 
+        # as seen in other parts of the app
+        upload_result = cloudinary.uploader.upload(
+            file.file, 
+            folder="payment_proofs",
+            resource_type="auto"
+        )
         return {"url": upload_result.get("secure_url")}
     except Exception as e:
+        print(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Feedback ---
