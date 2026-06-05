@@ -18,6 +18,12 @@ class Settings:
     CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
     CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
     CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+    
+    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+    EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+
     if "*" in BACKEND_CORS_ORIGINS:
         BACKEND_CORS_ORIGINS = ["*"]
     
