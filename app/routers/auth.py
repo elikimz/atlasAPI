@@ -271,6 +271,7 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
         "is_admin": current_user.is_admin,
+        "is_trained": current_user.is_trained,
         "deposit_wallet_balance": current_user.deposit_wallet_balance,
         "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
         "performance_bonus_balance": current_user.performance_bonus_balance,
