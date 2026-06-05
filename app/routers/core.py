@@ -182,63 +182,93 @@ async def get_dashboard_summary(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # Count certifications
-    cert_result = await db.execute(
-        select(func.count(models.UserCertification.id)).filter(
-            models.UserCertification.user_id == current_user.id,
-            models.UserCertification.status == "completed"
-        )
-    )
-    completed_certs = cert_result.scalar() or 0
-    
-    # Count active (available) tasks
     try:
-        all_tasks_result = await db.execute(select(models.VideoTask))
-        all_tasks = all_tasks_result.scalars().all()
-    except Exception:
-        all_tasks = []
-    
-    try:
-        uvt_result = await db.execute(
-            select(models.UserVideoTask).filter(
-                models.UserVideoTask.user_id == current_user.id
+        # Count certifications
+        try:
+            cert_result = await db.execute(
+                select(func.count(models.UserCertification.id)).filter(
+                    models.UserCertification.user_id == current_user.id,
+                    models.UserCertification.status == "completed"
+                )
             )
-        )
-        user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
-    except Exception:
+            completed_certs = cert_result.scalar() or 0
+        except Exception as e:
+            print(f"Error counting certifications: {e}")
+            completed_certs = 0
+        
+        # Count active (available) tasks
+        all_tasks = []
+        try:
+            all_tasks_result = await db.execute(select(models.VideoTask))
+            all_tasks = all_tasks_result.scalars().all() or []
+        except Exception as e:
+            print(f"Error fetching tasks: {e}")
+            all_tasks = []
+        
+        # Get user tasks
         user_tasks = {}
-    
-    completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
-    active_tasks_count = max(0, len(all_tasks) - completed_tasks_count)
-    pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
+        try:
+            uvt_result = await db.execute(
+                select(models.UserVideoTask).filter(
+                    models.UserVideoTask.user_id == current_user.id
+                )
+            )
+            user_tasks = {uvt.video_task_id: uvt.status for uvt in (uvt_result.scalars().all() or [])}
+        except Exception as e:
+            print(f"Error fetching user tasks: {e}")
+            user_tasks = {}
+        
+        completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
+        active_tasks_count = max(0, len(all_tasks) - completed_tasks_count)
+        pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
 
-    # Get recent activity
-    recent_uvt_result = await db.execute(
-        select(models.UserVideoTask, models.VideoTask)
-        .join(models.VideoTask)
-        .filter(models.UserVideoTask.user_id == current_user.id)
-        .order_by(models.UserVideoTask.completed_at.desc())
-        .limit(5)
-    )
-    
-    recent_activity = []
-    for uvt, vt in recent_uvt_result.all():
-        recent_activity.append({
-            "id": uvt.id,
-            "description": f"Completed: {vt.title}",
-            "amount": f"+ ${vt.reward_amount:.2f}",
-            "status": uvt.status.capitalize()
-        })
-    
-    return {
-        "footage_labeled_min": 0,
-        "approved_roles": "None yet",
-        "certifications_earned": completed_certs,
-        "active_tasks": active_tasks_count,
-        "completed_tasks": completed_tasks_count,
-        "pending_videos": pending_videos_count,
-        "recent_activity": recent_activity
-    }
+        # Get recent activity
+        recent_activity = []
+        try:
+            recent_uvt_result = await db.execute(
+                select(models.UserVideoTask, models.VideoTask)
+                .join(models.VideoTask)
+                .filter(models.UserVideoTask.user_id == current_user.id)
+                .order_by(models.UserVideoTask.completed_at.desc())
+                .limit(5)
+            )
+            
+            for uvt, vt in recent_uvt_result.all():
+                try:
+                    recent_activity.append({
+                        "id": uvt.id,
+                        "description": f"Completed: {vt.title}",
+                        "amount": f"+ ${vt.reward_amount:.2f}",
+                        "status": uvt.status.capitalize()
+                    })
+                except Exception as e:
+                    print(f"Error processing activity: {e}")
+                    continue
+        except Exception as e:
+            print(f"Error fetching recent activity: {e}")
+            recent_activity = []
+        
+        return {
+            "footage_labeled_min": 0,
+            "approved_roles": "None yet",
+            "certifications_earned": completed_certs,
+            "active_tasks": active_tasks_count,
+            "completed_tasks": completed_tasks_count,
+            "pending_videos": pending_videos_count,
+            "recent_activity": recent_activity
+        }
+    except Exception as e:
+        print(f"Fatal error in dashboard summary: {e}")
+        # Return safe defaults
+        return {
+            "footage_labeled_min": 0,
+            "approved_roles": "None yet",
+            "certifications_earned": 0,
+            "active_tasks": 0,
+            "completed_tasks": 0,
+            "pending_videos": 0,
+            "recent_activity": []
+        }
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
 async def get_certifications(
