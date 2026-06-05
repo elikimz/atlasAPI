@@ -7,16 +7,7 @@ from sqlalchemy import select, delete
 from app.database.database import get_async_db
 from app.routers.auth import get_current_user
 from app.models import models
-import cloudinary
-import cloudinary.uploader
 from app.config import settings
-
-# Configure Cloudinary
-cloudinary.config(
-    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
-    api_key=settings.CLOUDINARY_API_KEY,
-    api_secret=settings.CLOUDINARY_API_SECRET,
-)
 
 router = APIRouter()
 
@@ -301,31 +292,7 @@ async def create_deposit_request(
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/payments/upload-proof")
-async def upload_payment_proof(
-    file: UploadFile = File(...),
-    current_user: models.User = Depends(get_current_user)
-):
-    try:
-        # Note: Added folder "payment_proofs" and using synchronous upload 
-        # as seen in other parts of the app
-        import os
-        c_name = settings.CLOUDINARY_CLOUD_NAME or os.getenv("CLOUDINARY_CLOUD_NAME")
-        c_key = settings.CLOUDINARY_API_KEY or os.getenv("CLOUDINARY_API_KEY")
-        c_secret = settings.CLOUDINARY_API_SECRET or os.getenv("CLOUDINARY_API_SECRET")
-
-        upload_result = cloudinary.uploader.upload(
-            file.file, 
-            folder="payment_proofs",
-            resource_type="auto",
-            cloud_name=c_name,
-            api_key=c_key,
-            api_secret=c_secret
-        )
-        return {"url": upload_result.get("secure_url")}
-    except Exception as e:
-        print(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Note: upload-proof endpoint removed. Uploads are now handled directly by the frontend using an unsigned preset.
 
 # --- Feedback ---
 class EvaluationSchema(BaseModel):
