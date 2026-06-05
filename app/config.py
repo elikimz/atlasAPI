@@ -21,8 +21,8 @@ class Settings:
     
     SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-    EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-    EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+    EMAIL_SENDER = os.getenv("EMAIL_SENDER", "adpulseai2@gmail.com")
+    EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "xxjhvcdmhzeoekgj")
 
     if "*" in BACKEND_CORS_ORIGINS:
         BACKEND_CORS_ORIGINS = ["*"]
