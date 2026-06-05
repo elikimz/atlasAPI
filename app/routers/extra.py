@@ -215,9 +215,16 @@ class PaymentOverview(BaseModel):
     current_pending: float
 
 class PaymentHistorySchema(BaseModel):
+    id: int
     period: str
     amount: float
     status: str
+    type: str
+    payment_method: Optional[str]
+    network: Optional[str]
+    proof_url: Optional[str]
+    admin_notes: Optional[str]
+    created_at: Optional[str]
 
     class Config:
         orm_mode = True
@@ -251,10 +258,21 @@ async def get_payment_history(
     db: AsyncSession = Depends(get_async_db)
 ):
     result = await db.execute(
-        select(models.Payment).filter(models.Payment.user_id == current_user.id)
+        select(models.Payment).filter(models.Payment.user_id == current_user.id).order_by(models.Payment.created_at.desc())
     )
     payments = result.scalars().all()
-    return [{"period": p.period, "amount": p.amount, "status": p.status} for p in payments]
+    return [{
+        "id": p.id,
+        "period": p.period,
+        "amount": p.amount,
+        "status": p.status,
+        "type": p.type,
+        "payment_method": p.payment_method,
+        "network": p.network,
+        "proof_url": p.proof_url,
+        "admin_notes": p.admin_notes,
+        "created_at": p.created_at.isoformat() if p.created_at else None
+    } for p in payments]
 
 @router.post("/payments/method", response_model=dict)
 async def update_payment_method(
