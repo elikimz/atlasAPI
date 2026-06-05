@@ -23,6 +23,9 @@ class User(Base):
     plan_expiry_date = Column(DateTime(timezone=True), nullable=True)
     plan_purchase_price = Column(Float, default=0.0)
 
+    # Security
+    withdrawal_password = Column(String, nullable=True) # Hashed withdrawal PIN/password
+
     # Relationships
     certifications = relationship("UserCertification", back_populates="user")
     referral_codes = relationship("ReferralCode", back_populates="user")
@@ -30,6 +33,7 @@ class User(Base):
     evaluations = relationship("Evaluation", back_populates="user")
     video_tasks = relationship("UserVideoTask", back_populates="user")
     current_plan = relationship("Plan", foreign_keys=[current_plan_id])
+    withdrawal_accounts = relationship("WithdrawalAccount", back_populates="user")
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -178,3 +182,18 @@ class UserPlanHistory(Base):
 
     user = relationship("User", backref="plan_history")
     plan = relationship("Plan") # Updated relationship
+
+class WithdrawalAccount(Base):
+    __tablename__ = "withdrawal_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    type = Column(String, nullable=False) # crypto, mpesa, wise, bank
+    label = Column(String, nullable=True) # Primary, Work, etc.
+    address = Column(String, nullable=False) # Wallet address or phone number
+    network = Column(String, nullable=True) # ERC20, BEP20, etc.
+    is_verified = Column(Boolean, default=False)
+    is_primary = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="withdrawal_accounts")

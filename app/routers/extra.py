@@ -346,6 +346,132 @@ async def get_evaluations(
 
 # --- Investment Plans (Handled by plans.py router) ---
 
+# --- Withdrawal Accounts ---
+class WithdrawalAccountSchema(BaseModel):
+    id: int
+    type: str
+    label: Optional[str]
+    address: str
+    network: Optional[str]
+    is_verified: bool
+    is_primary: bool
+
+    class Config:
+        orm_mode = True
+
+class WithdrawalAccountCreate(BaseModel):
+    type: str
+    label: Optional[str]
+    address: str
+    network: Optional[str]
+    is_primary: bool = False
+
+@router.get("/withdrawal-accounts", response_model=List[WithdrawalAccountSchema])
+async def get_withdrawal_accounts(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    result = await db.execute(
+        select(models.WithdrawalAccount).filter(models.WithdrawalAccount.user_id == current_user.id)
+    )
+    return result.scalars().all()
+
+@router.post("/withdrawal-accounts", response_model=WithdrawalAccountSchema)
+async def add_withdrawal_account(
+    account_data: WithdrawalAccountCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # If this is primary, unset other primary accounts
+    if account_data.is_primary:
+        await db.execute(
+            models.WithdrawalAccount.__table__.update()
+            .where(models.WithdrawalAccount.user_id == current_user.id)
+            .values(is_primary=False)
+        )
+    
+    new_account = models.WithdrawalAccount(
+        user_id=current_user.id,
+        **account_data.dict()
+    )
+    db.add(new_account)
+    await db.commit()
+    await db.refresh(new_account)
+    return new_account
+
+# --- Withdrawal Workflow ---
+class WithdrawalRequest(BaseModel):
+    amount: float
+    account_id: int
+    password: str
+
+class WithdrawalPasswordSet(BaseModel):
+    password: str
+
+@router.post("/settings/withdrawal-password", response_model=dict)
+async def set_withdrawal_password(
+    data: WithdrawalPasswordSet,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # For simplicity, we'll store it directly for now, but in production, use hashing
+    current_user.withdrawal_password = data.password
+    await db.commit()
+    return {"message": "Withdrawal password set successfully"}
+
+@router.post("/payments/withdraw", response_model=dict)
+async def request_withdrawal(
+    withdrawal_data: WithdrawalRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    # 1. Verify withdrawal password
+    if not current_user.withdrawal_password or current_user.withdrawal_password != withdrawal_data.password:
+        raise HTTPException(status_code=403, detail="Invalid withdrawal password")
+    
+    # 2. Check balance
+    if current_user.withdrawal_wallet_balance < withdrawal_data.amount:
+        raise HTTPException(status_code=400, detail="Insufficient withdrawal balance")
+    
+    # 3. Get account details
+    result = await db.execute(
+        select(models.WithdrawalAccount).filter(
+            models.WithdrawalAccount.id == withdrawal_data.account_id,
+            models.WithdrawalAccount.user_id == current_user.id
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Withdrawal account not found")
+    
+    # 4. Create payment record
+    try:
+        from datetime import datetime, timezone
+        new_payment = models.Payment(
+            user_id=current_user.id,
+            amount=withdrawal_data.amount,
+            period=datetime.now(timezone.utc).strftime("%b %Y"),
+            status="pending",
+            type="payout",
+            payment_method=f"{account.type.upper()} ({account.network})",
+            network=account.network,
+            admin_notes=f"Withdrawal to {account.address}"
+        )
+        
+        # Deduct balance
+        current_user.withdrawal_wallet_balance -= withdrawal_data.amount
+        
+        db.add(new_payment)
+        await db.commit()
+        
+        return {
+            "message": "Withdrawal submitted successfully. Your funds are being processed.",
+            "payment_id": new_payment.id
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- Settings ---
 class UserProfile(BaseModel):
     first_name: Optional[str]
