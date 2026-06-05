@@ -53,6 +53,13 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR"))
             await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             
+            # Payments table migrations
+            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'payout'"))
+            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method VARCHAR"))
+            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS network VARCHAR"))
+            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS proof_url VARCHAR"))
+            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS admin_notes VARCHAR"))
+            
             print("✅ Startup migrations completed successfully.")
         except Exception as e:
             print(f"⚠️ Migration Notice (Safe to ignore if columns exist): {e}")

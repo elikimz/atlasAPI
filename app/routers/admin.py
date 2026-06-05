@@ -145,3 +145,61 @@ async def delete_certification(
     await db.delete(cert)
     await db.commit()
     return {"message": "Certification deleted"}
+
+@router.get("/admin/payments")
+async def get_all_payments(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Payment, User
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Payment).options(selectinload(Payment.user)).order_by(Payment.created_at.desc())
+    )
+    payments = result.scalars().all()
+    return payments
+
+@router.post("/admin/payments/{payment_id}/approve")
+async def approve_payment(
+    payment_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Payment, User
+    result = await db.execute(select(Payment).filter(Payment.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    
+    if payment.status != "pending":
+        raise HTTPException(status_code=400, detail="Payment is not pending")
+    
+    payment.status = "paid"
+    
+    # If it's a deposit, update user balance
+    if payment.type == "deposit":
+        result = await db.execute(select(User).filter(User.id == payment.user_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.deposit_wallet_balance += payment.amount
+    
+    await db.commit()
+    return {"message": "Payment approved"}
+
+@router.post("/admin/payments/{payment_id}/reject")
+async def reject_payment(
+    payment_id: int,
+    admin_notes: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Payment
+    result = await db.execute(select(Payment).filter(Payment.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    
+    payment.status = "rejected"
+    payment.admin_notes = admin_notes
+    await db.commit()
+    return {"message": "Payment rejected"}

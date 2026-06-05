@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -262,6 +262,46 @@ async def update_payment_method(
 ):
     # In a real app, you'd save this to a PaymentMethod table
     return {"message": "Payment method updated successfully"}
+
+@router.post("/payments/deposit")
+async def create_deposit_request(
+    amount: float,
+    payment_method: str,
+    network: str,
+    proof_url: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        new_payment = models.Payment(
+            user_id=current_user.id,
+            amount=amount,
+            period=datetime.now(timezone.utc).strftime("%b %Y"),
+            status="pending",
+            type="deposit",
+            payment_method=payment_method,
+            network=network,
+            proof_url=proof_url
+        )
+        db.add(new_payment)
+        await db.commit()
+        await db.refresh(new_payment)
+        return new_payment
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/payments/upload-proof")
+async def upload_payment_proof(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        import cloudinary.uploader
+        upload_result = cloudinary.uploader.upload(file.file, folder="payment_proofs")
+        return {"url": upload_result.get("secure_url")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Feedback ---
 class EvaluationSchema(BaseModel):

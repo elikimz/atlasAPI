@@ -106,7 +106,12 @@ class Payment(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     amount = Column(Float, nullable=False)
     period = Column(String, nullable=False)
-    status = Column(String, default="pending") # pending, paid, in_progress
+    status = Column(String, default="pending") # pending, paid, in_progress, rejected, cancelled
+    type = Column(String, default="payout") # payout, deposit
+    payment_method = Column(String, nullable=True)
+    network = Column(String, nullable=True)
+    proof_url = Column(String, nullable=True)
+    admin_notes = Column(String, nullable=True)
     payout_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
