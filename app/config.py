@@ -20,5 +20,11 @@ class Settings:
     CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
     if "*" in BACKEND_CORS_ORIGINS:
         BACKEND_CORS_ORIGINS = ["*"]
+    
+    def debug_cloudinary(self):
+        print(f"DEBUG: Cloudinary Cloud Name: {self.CLOUDINARY_CLOUD_NAME}")
+        print(f"DEBUG: Cloudinary API Key: {self.CLOUDINARY_API_KEY}")
+        print(f"DEBUG: Cloudinary API Secret Length: {len(self.CLOUDINARY_API_SECRET) if self.CLOUDINARY_API_SECRET else 0}")
 
 settings = Settings()
+settings.debug_cloudinary()

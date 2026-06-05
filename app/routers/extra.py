@@ -309,13 +309,18 @@ async def upload_payment_proof(
     try:
         # Note: Added folder "payment_proofs" and using synchronous upload 
         # as seen in other parts of the app
+        import os
+        c_name = settings.CLOUDINARY_CLOUD_NAME or os.getenv("CLOUDINARY_CLOUD_NAME")
+        c_key = settings.CLOUDINARY_API_KEY or os.getenv("CLOUDINARY_API_KEY")
+        c_secret = settings.CLOUDINARY_API_SECRET or os.getenv("CLOUDINARY_API_SECRET")
+
         upload_result = cloudinary.uploader.upload(
             file.file, 
             folder="payment_proofs",
             resource_type="auto",
-            cloud_name=settings.CLOUDINARY_CLOUD_NAME,
-            api_key=settings.CLOUDINARY_API_KEY,
-            api_secret=settings.CLOUDINARY_API_SECRET
+            cloud_name=c_name,
+            api_key=c_key,
+            api_secret=c_secret
         )
         return {"url": upload_result.get("secure_url")}
     except Exception as e:
