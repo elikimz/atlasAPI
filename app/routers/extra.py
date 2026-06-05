@@ -7,6 +7,16 @@ from sqlalchemy import select, delete
 from app.database.database import get_async_db
 from app.routers.auth import get_current_user
 from app.models import models
+import cloudinary
+import cloudinary.uploader
+from app.config import settings
+
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+)
 
 router = APIRouter()
 
@@ -297,7 +307,6 @@ async def upload_payment_proof(
     current_user: models.User = Depends(get_current_user)
 ):
     try:
-        import cloudinary.uploader
         # Note: Added folder "payment_proofs" and using synchronous upload 
         # as seen in other parts of the app
         upload_result = cloudinary.uploader.upload(

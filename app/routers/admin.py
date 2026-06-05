@@ -5,9 +5,17 @@ from app.database.database import get_async_db
 from app.models.models import User, VideoTask
 from app.routers.auth import get_current_user
 from pydantic import BaseModel
+import cloudinary
 import cloudinary.uploader
 import os
 from app.config import settings
+
+# Configure Cloudinary
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+)
 
 class VideoTaskCreate(BaseModel):
     title: str
