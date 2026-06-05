@@ -343,6 +343,11 @@ async def complete_certification(
     
     user_cert.status = "completed"
     user_cert.completed_at = datetime.now(timezone.utc)
+    
+    # Update user's global trained status
+    current_user.is_trained = True
+    
     await db.commit()
+    await db.refresh(current_user)
     
     return {"message": "Certification completed"}

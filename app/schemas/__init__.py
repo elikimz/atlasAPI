@@ -14,6 +14,7 @@ class User(UserBase):
     id: int
     created_at: datetime
     is_admin: bool
+    is_trained: bool
     deposit_wallet_balance: float
     withdrawal_wallet_balance: float
 

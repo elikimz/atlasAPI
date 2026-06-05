@@ -10,6 +10,7 @@ class User(Base):
     last_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     is_admin = Column(Boolean, default=False)
+    is_trained = Column(Boolean, default=False)
     deposit_wallet_balance = Column(Float, default=0.0)
     withdrawal_wallet_balance = Column(Float, default=0.0)
     performance_bonus_balance = Column(Float, default=0.0)
@@ -131,7 +132,7 @@ class VideoTask(Base):
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
     video_url = Column(String, nullable=False)
-    reward_amount = Column(Float, default=0.0)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class UserVideoTask(Base):
