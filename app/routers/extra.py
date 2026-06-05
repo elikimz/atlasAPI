@@ -233,6 +233,12 @@ class PaymentMethodUpdate(BaseModel):
     type: str # crypto, wise
     details: dict
 
+class DepositRequestSchema(BaseModel):
+    amount: float
+    payment_method: str
+    network: str
+    proof_url: str
+
 @router.get("/payments/overview", response_model=PaymentOverview)
 async def get_payment_overview(
     current_user: models.User = Depends(get_current_user),
@@ -282,30 +288,31 @@ async def update_payment_method(
     # In a real app, you'd save this to a PaymentMethod table
     return {"message": "Payment method updated successfully"}
 
-@router.post("/payments/deposit")
+@router.post("/payments/deposit", response_model=dict)
 async def create_deposit_request(
-    amount: float,
-    payment_method: str,
-    network: str,
-    proof_url: str,
+    deposit_data: DepositRequestSchema,
     db: AsyncSession = Depends(get_async_db),
     current_user: models.User = Depends(get_current_user)
 ):
     try:
         new_payment = models.Payment(
             user_id=current_user.id,
-            amount=amount,
+            amount=deposit_data.amount,
             period=datetime.now(timezone.utc).strftime("%b %Y"),
             status="pending",
             type="deposit",
-            payment_method=payment_method,
-            network=network,
-            proof_url=proof_url
+            payment_method=deposit_data.payment_method,
+            network=deposit_data.network,
+            proof_url=deposit_data.proof_url
         )
         db.add(new_payment)
         await db.commit()
         await db.refresh(new_payment)
-        return new_payment
+        return {
+            "id": new_payment.id,
+            "status": new_payment.status,
+            "message": "Deposit request submitted successfully. Please wait for admin approval."
+        }
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
