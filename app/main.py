@@ -51,6 +51,7 @@ async def run_migrations():
             # OTP table migrations
             await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS is_used BOOLEAN DEFAULT FALSE"))
             await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR"))
+            await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             
             print("✅ Startup migrations completed successfully.")
         except Exception as e:
@@ -87,17 +88,23 @@ async def seed_data():
 
             # Seed default certification
             result = await db.execute(select(models.Certification).filter(models.Certification.name == "Video Reviewing Mastery"))
-            if not result.scalars().first():
+            existing_cert = result.scalar_one_or_none()
+            if not existing_cert:
                 default_cert = models.Certification(
                     name="Video Reviewing Mastery",
                     description="Master the essentials of video assessment...",
                     estimated_time="15 mins",
                     video_url="https://res.cloudinary.com/demo/video/upload/dog.mp4",
-                    steps_count=1
+                    steps_count=1,
+                    is_active=True
                 )
                 db.add(default_cert)
                 await db.commit()
                 print("✅ Default certification seeded.")
+            elif not getattr(existing_cert, "is_active", True):
+                existing_cert.is_active = True
+                await db.commit()
+                print("✅ Default certification reactivated.")
         except Exception as e:
             print(f"❌ Seeding error: {e}")
             await db.rollback()
