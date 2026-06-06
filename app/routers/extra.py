@@ -34,6 +34,8 @@ class ReferralSummary(BaseModel):
     earnings: float
     users_referred: int
     task_rebate: float
+    total_invites: int
+    active_invites: int
 
 class ReferralCodeSchema(BaseModel):
     code: str
@@ -69,14 +71,49 @@ async def get_referral_summary(
         total_signups = sum(getattr(c, "signups_count", 0) or 0 for c in codes)
         total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
         
+        # Calculate active invites (users who have an active plan)
+        # We need to find all users referred by this user's codes
+        active_invites_count = 0
+        total_invites_count = 0
+        
+        # 1. Get all users who used this user's referral codes
+        # First, find the user's ID to check ReferralRelationship
+        result = await db.execute(
+            select(models.User.id)
+            .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+            .filter(models.ReferralRelationship.referrer_id == current_user.id)
+        )
+        tier_a_ids = [row[0] for row in result.all()]
+        total_invites_count = len(tier_a_ids)
+        
+        if tier_a_ids:
+            # Count how many of these users have a current_plan_id > 1 (assuming 1 is free/none)
+            # Actually, check if they have any current_plan_id assigned
+            active_result = await db.execute(
+                select(func.count(models.User.id))
+                .filter(
+                    models.User.id.in_(tier_a_ids),
+                    models.User.current_plan_id.isnot(None)
+                )
+            )
+            active_invites_count = active_result.scalar() or 0
+
         return {
             "earnings": total_earnings,
             "users_referred": total_signups,
-            "task_rebate": total_task_rebate
+            "task_rebate": total_task_rebate,
+            "total_invites": total_invites_count,
+            "active_invites": active_invites_count
         }
     except Exception as e:
         print(f"Safe Referral Summary Error: {e}")
-        return {"earnings": 0.0, "users_referred": 0, "task_rebate": 0.0}
+        return {
+            "earnings": 0.0, 
+            "users_referred": 0, 
+            "task_rebate": 0.0,
+            "total_invites": 0,
+            "active_invites": 0
+        }
 
 @router.get("/referrals/active", response_model=List[InvitedUser])
 async def get_active_referrals(
