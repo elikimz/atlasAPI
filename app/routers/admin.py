@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask, Certification, Payment, Plan, ReferralCode, ReferralRelationship
