@@ -350,9 +350,12 @@ async def start_certification(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # If user is already trained, they shouldn't be starting new certifications
+    # If user is already trained, block re-starting any certification
     if current_user.is_trained:
-        return {"message": "User already completed all training"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Training already completed. Please download your certificate."
+        )
 
     cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
     cert = cert_result.scalar_one_or_none()
@@ -369,7 +372,12 @@ async def start_certification(
     user_cert = uc_result.scalars().first()
     
     if user_cert:
-        # If already completed or in progress, just return success so the UI can proceed
+        if user_cert.status == "completed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Certification already completed. Please download your certificate."
+            )
+        # If in_progress, allow re-entry into the video player
         return {"message": f"Certification already {user_cert.status}"}
     
     new_user_cert = models.UserCertification(
