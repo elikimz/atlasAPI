@@ -73,6 +73,7 @@ class UserUpdate(BaseModel):
     email: str | None = None
     role: str | None = None
     is_admin: bool | None = None
+    is_suspended: bool | None = None
     is_trained: bool | None = None
     deposit_wallet_balance: float | None = None
     withdrawal_wallet_balance: float | None = None
@@ -309,6 +310,7 @@ async def get_all_users(
             "email": u.email,
             "role": u.role,
             "is_admin": u.is_admin,
+            "is_suspended": u.is_suspended,
             "is_trained": u.is_trained,
             "deposit_wallet_balance": u.deposit_wallet_balance,
             "withdrawal_wallet_balance": u.withdrawal_wallet_balance,

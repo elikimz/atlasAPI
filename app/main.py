@@ -38,6 +38,7 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trained BOOLEAN DEFAULT FALSE"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'user'"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_password VARCHAR"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE"))
             
             # Backfill admin role
             await conn.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = TRUE"))

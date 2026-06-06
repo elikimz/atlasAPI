@@ -139,6 +139,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
+    
+    if getattr(user, 'is_suspended', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been suspended. Please contact support."
+        )
+        
     return user
 
 # --- Auth Endpoints ---
@@ -154,11 +161,17 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
         user_result = await db.execute(select(models.User).filter(models.User.email == email))
         user = user_result.scalar_one_or_none()
 
-        if not user:
+        if user:
+            if getattr(user, 'is_suspended', False):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Your account has been suspended. Please contact support."
+                )
+        else:
             if not otp_request.first_name or not otp_request.last_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Account not found. Please provide your first and last name to register."
+                    detail="First and last name are required for registration."
                 )
             
             # Create new user
