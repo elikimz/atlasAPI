@@ -1,9 +1,11 @@
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from fpdf import FPDF
 
 from app.database.database import get_async_db
 from app.models import models
@@ -416,3 +418,108 @@ async def complete_certification(
     await db.refresh(current_user)
     
     return {"message": "Certification completed"}
+
+@router.get("/training/certificate")
+async def get_certificate(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    if not current_user.is_trained:
+        raise HTTPException(status_code=400, detail="Training not completed")
+    
+    # Create PDF in memory
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    
+    # Set margins
+    pdf.set_margins(0, 0, 0)
+    
+    # Background Color (Light subtle cream/blue)
+    pdf.set_fill_color(250, 251, 255)
+    pdf.rect(0, 0, 297, 210, 'F')
+    
+    # Decorative Border
+    pdf.set_draw_color(89, 50, 234) # Purple color from UI
+    pdf.set_line_width(2)
+    pdf.rect(10, 10, 277, 190)
+    pdf.set_line_width(0.5)
+    pdf.rect(13, 13, 271, 184)
+    
+    # Logo / Brand
+    pdf.set_font('Arial', 'B', 24)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(0, 30)
+    pdf.cell(297, 10, 'AdPulseAI', align='C')
+    
+    # Certificate Title
+    pdf.set_font('Arial', 'B', 40)
+    pdf.set_text_color(89, 50, 234)
+    pdf.set_xy(0, 60)
+    pdf.cell(297, 20, 'CERTIFICATE OF COMPLETION', align='C')
+    
+    # Subtitle
+    pdf.set_font('Arial', '', 16)
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_xy(0, 85)
+    pdf.cell(297, 10, 'This is to certify that', align='C')
+    
+    # User Name
+    user_name = f"{current_user.first_name} {current_user.last_name}"
+    pdf.set_font('Arial', 'B', 32)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(0, 105)
+    pdf.cell(297, 15, user_name.upper(), align='C')
+    
+    # Divider line under name
+    pdf.set_draw_color(226, 232, 240)
+    pdf.line(80, 125, 217, 125)
+    
+    # Achievement text
+    pdf.set_font('Arial', '', 16)
+    pdf.set_text_color(71, 85, 105)
+    pdf.set_xy(0, 135)
+    pdf.multi_cell(297, 8, 'has successfully completed the professional training program for\nVIDEO REVIEWING MASTERY', align='C')
+    
+    # Date and Signature Section
+    completion_date = datetime.now().strftime("%B %d, %Y")
+    
+    # Date
+    pdf.set_font('Arial', 'B', 12)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(60, 170)
+    pdf.cell(50, 5, completion_date, align='C')
+    pdf.set_font('Arial', '', 10)
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_xy(60, 175)
+    pdf.cell(50, 5, 'Date of Achievement', align='C')
+    pdf.line(60, 168, 110, 168)
+    
+    # Signature
+    pdf.set_font('Arial', 'B', 12)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(187, 170)
+    pdf.cell(50, 5, 'AdPulseAI Certification Board', align='C')
+    pdf.set_font('Arial', '', 10)
+    pdf.set_text_color(100, 116, 139)
+    pdf.set_xy(187, 175)
+    pdf.cell(50, 5, 'Authorized Signature', align='C')
+    pdf.line(187, 168, 237, 168)
+    
+    # Badge / Seal (Simple geometric representation)
+    pdf.set_fill_color(89, 50, 234)
+    pdf.circle(148.5, 175, 15, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font('Arial', 'B', 8)
+    pdf.set_xy(138.5, 172)
+    pdf.cell(20, 5, 'OFFICIAL', align='C')
+    pdf.set_xy(138.5, 177)
+    pdf.cell(20, 5, 'VERIFIED', align='C')
+    
+    # Output PDF
+    pdf_output = pdf.output(dest='S')
+    
+    return Response(
+        content=pdf_output,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{current_user.last_name}.pdf"}
+    )
