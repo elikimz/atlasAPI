@@ -18,9 +18,16 @@ router = APIRouter()
 
 @router.get("/tasks/available")
 async def get_available_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
-    # Fetch all video tasks
-    result = await db.execute(select(models.VideoTask))
-    all_video_tasks = result.scalars().all()
+    # Fetch tasks assigned to user's plan OR tasks they already have progress in
+    query = select(models.VideoTask).outerjoin(
+        models.UserVideoTask, 
+        (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
+    ).filter(
+        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+    )
+    
+    result = await db.execute(query)
+    visible_tasks = result.scalars().all()
 
     # Fetch tasks status for the current user
     uvt_result = await db.execute(
@@ -30,27 +37,34 @@ async def get_available_tasks(db: AsyncSession = Depends(get_async_db), current_
     )
     user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
 
-    # Return all tasks with their status
+    # Return visible tasks with their status
     response = []
-    for task in all_video_tasks:
+    for task in visible_tasks:
         status = user_tasks.get(task.id, "available")
-        response.append({
-            "id": task.id,
-            "title": task.title,
-            "description": task.description,
-            "video_url": task.video_url,
-            "reward_amount": task.reward_amount,
-            "status": status
-        })
+        # Only show tasks that are NOT completed in the "available" list
+        if status != "completed":
+            response.append({
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "video_url": task.video_url,
+                "reward_amount": task.reward_amount,
+                "status": status
+            })
 
     return response
 
 @router.get("/tasks/all", response_model=List[AvailableTask])
 async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
-    """Return all video tasks regardless of completion status (used for task detail view)."""
-    result = await db.execute(select(models.VideoTask))
-    all_video_tasks = result.scalars().all()
-    return all_video_tasks
+    """Return all video tasks for the user's plan or their assigned tasks."""
+    query = select(models.VideoTask).outerjoin(
+        models.UserVideoTask, 
+        (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
+    ).filter(
+        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+    )
+    result = await db.execute(query)
+    return result.scalars().all()
 
 
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
@@ -82,11 +96,20 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks).")
 
     # 3. Process Task Completion
-    vt_result = await db.execute(select(models.VideoTask).filter(models.VideoTask.id == task_completion.video_task_id))
+    # Check if task is in user's plan or assigned to them
+    query = select(models.VideoTask).outerjoin(
+        models.UserVideoTask, 
+        (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
+    ).filter(
+        models.VideoTask.id == task_completion.video_task_id,
+        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+    )
+    
+    vt_result = await db.execute(query)
     video_task = vt_result.scalar_one_or_none()
     
     if not video_task:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video task not found")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This task is not available for your current plan.")
 
     # Check if user has already completed this specific task (regardless of daily limit)
     uvt_result = await db.execute(
@@ -199,14 +222,20 @@ async def get_dashboard_summary(
             print(f"Error counting certifications: {e}")
             completed_certs = 0
         
-        # Count active (available) tasks
-        all_tasks = []
+        # Count active (available) tasks within user's plan scope
+        user_scoped_tasks = []
         try:
-            all_tasks_result = await db.execute(select(models.VideoTask))
-            all_tasks = all_tasks_result.scalars().all() or []
+            query = select(models.VideoTask).outerjoin(
+                models.UserVideoTask, 
+                (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
+            ).filter(
+                (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+            )
+            all_tasks_result = await db.execute(query)
+            user_scoped_tasks = all_tasks_result.scalars().all() or []
         except Exception as e:
             print(f"Error fetching tasks: {e}")
-            all_tasks = []
+            user_scoped_tasks = []
         
         # Get user tasks
         user_tasks = {}
@@ -222,7 +251,7 @@ async def get_dashboard_summary(
             user_tasks = {}
         
         completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
-        active_tasks_count = max(0, len(all_tasks) - completed_tasks_count)
+        active_tasks_count = max(0, len(user_scoped_tasks) - completed_tasks_count)
         pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
 
         # Get recent activity

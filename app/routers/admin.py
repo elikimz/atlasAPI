@@ -26,12 +26,14 @@ class VideoTaskCreate(BaseModel):
     description: str
     reward_amount: float
     video_url: str
+    plan_id: int | None = None
 
 class VideoTaskUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     reward_amount: float | None = None
     video_url: str | None = None
+    plan_id: int | None = None
 
 class PlanCreate(BaseModel):
     name: str
@@ -157,16 +159,21 @@ async def get_all_video_tasks(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    result = await db.execute(select(VideoTask))
+    result = await db.execute(select(VideoTask).options(selectinload(VideoTask.plan)))
     tasks = result.scalars().all()
     return [
         {
             "id": t.id,
+            "plan_id": t.plan_id,
             "title": t.title,
             "description": t.description,
             "video_url": t.video_url,
             "reward_amount": t.reward_amount,
-            "created_at": t.created_at.isoformat() if t.created_at else None
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "plan": {
+                "id": t.plan.id,
+                "name": t.plan.name
+            } if t.plan else None
         } for t in tasks
     ]
 

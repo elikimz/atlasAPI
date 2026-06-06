@@ -86,6 +86,21 @@ async def purchase_plan(
     )
     db.add(user_plan_history)
     db.add(current_user)
+    
+    # Auto-assign tasks for the new plan
+    result_tasks = await db.execute(select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id))
+    plan_tasks = result_tasks.scalars().all()
+    for task in plan_tasks:
+        # Check if user already has this task to avoid duplicates
+        existing_task_result = await db.execute(
+            select(models.UserVideoTask).filter(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.video_task_id == task.id
+            )
+        )
+        if not existing_task_result.scalar_one_or_none():
+            db.add(models.UserVideoTask(user_id=current_user.id, video_task_id=task.id, status="pending"))
+            
     await db.commit()
 
     await db.refresh(user_plan_history)
@@ -170,6 +185,25 @@ async def upgrade_plan(
     )
     db.add(new_user_plan_history)
     db.add(current_user)
+    
+    # --- Good Business Logic: Clean up old plan tasks ---
+    # When upgrading, we remove "pending" tasks from the old plan that were never started/completed.
+    # This ensures the user's task list stays clean and relevant to their new tier.
+    await db.execute(
+        models.UserVideoTask.__table__.delete().where(
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.status == "pending"
+        )
+    )
+
+    # Auto-assign tasks for the new upgraded plan
+    result_tasks = await db.execute(select(models.VideoTask).filter(models.VideoTask.plan_id == new_plan.id))
+    plan_tasks = result_tasks.scalars().all()
+    for task in plan_tasks:
+        # We don't need to check for existing here because we just cleared pending tasks,
+        # and completed tasks should remain in history.
+        db.add(models.UserVideoTask(user_id=current_user.id, video_task_id=task.id, status="pending"))
+            
     await db.commit()
 
     await db.refresh(new_user_plan_history)

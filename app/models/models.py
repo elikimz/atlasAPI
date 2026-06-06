@@ -141,11 +141,14 @@ class VideoTask(Base):
     __tablename__ = "video_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=True)
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
     video_url = Column(String, nullable=False)
     reward_amount = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    plan = relationship("Plan")
 
 class UserVideoTask(Base):
     __tablename__ = "user_video_tasks"

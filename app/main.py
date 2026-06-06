@@ -46,6 +46,7 @@ async def run_migrations():
             # Video tasks table migrations
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0"))
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
+            await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE"))
             
             # Certifications table migrations
             await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
