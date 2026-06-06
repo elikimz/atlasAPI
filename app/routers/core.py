@@ -309,34 +309,41 @@ async def get_certifications(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    result = await db.execute(select(models.Certification))
-    all_certs = result.scalars().all()
-    
-    uc_result = await db.execute(
-        select(models.UserCertification).filter(models.UserCertification.user_id == current_user.id)
-    )
-    user_certs = {uc.certification_id: uc.status for uc in uc_result.scalars().all()}
-    
-    # Fetch a fallback video from video_tasks if needed
-    fallback_video_url = None
-    video_result = await db.execute(select(models.VideoTask).limit(1))
-    fallback_video = video_result.scalar_one_or_none()
-    if fallback_video:
-        fallback_video_url = fallback_video.video_url
+    try:
+        result = await db.execute(select(models.Certification))
+        all_certs = result.scalars().all()
+        
+        uc_result = await db.execute(
+            select(models.UserCertification).filter(models.UserCertification.user_id == current_user.id)
+        )
+        user_certs = {uc.certification_id: uc.status for uc in uc_result.scalars().all()}
+        
+        # Fetch a fallback video from video_tasks if needed
+        fallback_video_url = "https://www.youtube.com/embed/dQw4w9WgXcQ" # Default fallback
+        try:
+            video_result = await db.execute(select(models.VideoTask).limit(1))
+            fallback_video = video_result.scalars().first()
+            if fallback_video and hasattr(fallback_video, 'video_url'):
+                fallback_video_url = fallback_video.video_url
+        except Exception as e:
+            print(f"Error fetching fallback video: {e}")
 
-    response = []
-    for cert in all_certs:
-        status = user_certs.get(cert.id, "available")
-        response.append({
-            "id": cert.id, 
-            "name": cert.name, 
-            "description": cert.description,
-            "estimated_time": cert.estimated_time,
-            "video_url": cert.video_url or fallback_video_url,
-            "status": status
-        })
-    
-    return response
+        response = []
+        for cert in all_certs:
+            status = user_certs.get(cert.id, "available")
+            response.append({
+                "id": cert.id, 
+                "name": cert.name, 
+                "description": cert.description or "",
+                "estimated_time": cert.estimated_time or "5 min",
+                "video_url": (cert.video_url if hasattr(cert, 'video_url') and cert.video_url else fallback_video_url),
+                "status": status
+            })
+        
+        return response
+    except Exception as e:
+        print(f"Error in get_certifications: {e}")
+        return []
 
 @router.post("/training/certifications/{id}/start", response_model=dict)
 async def start_certification(
