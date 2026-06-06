@@ -171,6 +171,7 @@ class DashboardSummary(BaseModel):
     completed_tasks: int
     pending_videos: int
     recent_activity: List[dict]
+    earnings_history: List[dict]
 
 class LearningHubContent(BaseModel):
     guidelines: str
@@ -248,6 +249,37 @@ async def get_dashboard_summary(
             print(f"Error fetching recent activity: {e}")
             recent_activity = []
         
+        # Get earnings history for the last 7 days
+        earnings_history = []
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        today = datetime.now(timezone.utc)
+        
+        for i in range(7):
+            # Calculate start and end of that day
+            day_offset = (today.weekday() - i) % 7
+            target_day = today - timedelta(days=day_offset)
+            day_start = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            
+            # Sum rewards for tasks completed on that day
+            earnings_result = await db.execute(
+                select(func.sum(models.VideoTask.reward_amount))
+                .join(models.UserVideoTask)
+                .filter(
+                    models.UserVideoTask.user_id == current_user.id,
+                    models.UserVideoTask.status == "completed",
+                    models.UserVideoTask.completed_at >= day_start,
+                    models.UserVideoTask.completed_at < day_end
+                )
+            )
+            daily_sum = earnings_result.scalar() or 0.0
+            
+            # Also include referral rebates for that day
+            # (In a real app, you'd track these in a separate transactions table)
+            # For now, we'll just use the task earnings
+            
+            earnings_history.insert(0, {"day": days[day_start.weekday()], "value": daily_sum})
+
         return {
             "footage_labeled_min": 0,
             "approved_roles": "None yet",
@@ -255,7 +287,8 @@ async def get_dashboard_summary(
             "active_tasks": active_tasks_count,
             "completed_tasks": completed_tasks_count,
             "pending_videos": pending_videos_count,
-            "recent_activity": recent_activity
+            "recent_activity": recent_activity,
+            "earnings_history": earnings_history
         }
     except Exception as e:
         print(f"Fatal error in dashboard summary: {e}")
@@ -267,7 +300,8 @@ async def get_dashboard_summary(
             "active_tasks": 0,
             "completed_tasks": 0,
             "pending_videos": 0,
-            "recent_activity": []
+            "recent_activity": [],
+            "earnings_history": []
         }
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
