@@ -162,12 +162,24 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
         user = user_result.scalar_one_or_none()
 
         if user:
+            # Existing User Check
             if getattr(user, 'is_suspended', False):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Your account has been suspended. Please contact support."
                 )
+            
+            # Update names for returning users if missing
+            if otp_request.first_name and not user.first_name:
+                user.first_name = otp_request.first_name.strip()
+            if otp_request.last_name and not user.last_name:
+                user.last_name = otp_request.last_name.strip()
+            
+            # Ensure returning user has a referral code record
+            if not user.referral_code:
+                user.referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         else:
+            # Registration Check
             if not otp_request.first_name or not otp_request.last_name:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -201,16 +213,6 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
                     )
                     db.add(relationship)
                     referral.signups_count = (referral.signups_count or 0) + 1
-        else:
-            # Update names for returning users if missing
-            if otp_request.first_name and not user.first_name:
-                user.first_name = otp_request.first_name.strip()
-            if otp_request.last_name and not user.last_name:
-                user.last_name = otp_request.last_name.strip()
-            
-            # Ensure returning user has a referral code record
-            if not user.referral_code:
-                user.referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
             
         # Ensure a record exists in the referral_codes table
         ref_code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == user.id))
