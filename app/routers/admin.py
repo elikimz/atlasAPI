@@ -207,14 +207,22 @@ async def delete_video_task(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
+    from sqlalchemy.exc import IntegrityError
     result = await db.execute(select(VideoTask).filter(VideoTask.id == task_id))
-    video_task = result.scalar_one_or_none()
-    if not video_task:
+    task = result.scalar_one_or_none()
+    if not task:
         raise HTTPException(status_code=404, detail="Video task not found")
     
-    await db.delete(video_task)
-    await db.commit()
-    return {"message": "Video task deleted successfully"}
+    try:
+        # Clean up user progress for this task
+        await db.execute(text("DELETE FROM user_video_tasks WHERE video_task_id = :tid"), {"tid": task_id})
+        
+        await db.delete(task)
+        await db.commit()
+        return {"message": "Video task deleted successfully"}
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Cannot delete task: {str(e.orig)}")
 
 # Certifications
 @router.post("/admin/certifications")
@@ -357,14 +365,45 @@ async def delete_user(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
+    from sqlalchemy.exc import IntegrityError
+    from app.models.models import ReferralRelationship, ReferralCode, Payment, UserCertification, UserVideoTask, WithdrawalAccount, UserPlanHistory
+    
     result = await db.execute(select(User).filter(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    await db.delete(user)
-    await db.commit()
-    return {"message": "User deleted successfully"}
+    try:
+        # Comprehensive manual cleanup to bypass potential missing DB cascades
+        # 1. Referral relationships
+        await db.execute(text("DELETE FROM referral_relationships WHERE user_id = :uid OR referrer_id = :uid"), {"uid": user_id})
+        # 2. Referral codes
+        await db.execute(text("DELETE FROM referral_codes WHERE user_id = :uid"), {"uid": user_id})
+        # 3. Payments
+        await db.execute(text("DELETE FROM payments WHERE user_id = :uid"), {"uid": user_id})
+        # 4. Certifications
+        await db.execute(text("DELETE FROM user_certifications WHERE user_id = :uid"), {"uid": user_id})
+        # 5. Video Tasks
+        await db.execute(text("DELETE FROM user_video_tasks WHERE user_id = :uid"), {"uid": user_id})
+        # 6. Withdrawal Accounts
+        await db.execute(text("DELETE FROM withdrawal_accounts WHERE user_id = :uid"), {"uid": user_id})
+        # 7. Plan History
+        await db.execute(text("DELETE FROM user_plan_history WHERE user_id = :uid"), {"uid": user_id})
+        # 8. Evaluations
+        await db.execute(text("DELETE FROM evaluations WHERE user_id = :uid"), {"uid": user_id})
+        
+        await db.delete(user)
+        await db.commit()
+        return {"message": "User and all related records deleted successfully"}
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot delete user: They have active dependencies (e.g., payments or referrals). Error: {str(e.orig)}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 # Payments
 @router.get("/admin/payments")
@@ -564,14 +603,36 @@ async def delete_plan(
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
+    from sqlalchemy.exc import IntegrityError
+    
     result = await db.execute(select(Plan).filter(Plan.id == plan_id))
     plan = result.scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
-    await db.delete(plan)
-    await db.commit()
-    return {"message": "Plan deleted successfully"}
+    try:
+        # Check if any users are still using this plan
+        user_check = await db.execute(select(User).filter(User.current_plan_id == plan_id).limit(1))
+        if user_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400, 
+                detail="Cannot delete plan: There are users currently subscribed to it. Change their plans first."
+            )
+            
+        await db.delete(plan)
+        await db.commit()
+        return {"message": "Plan deleted successfully"}
+    except HTTPException:
+        raise
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot delete plan due to database constraints. Error: {str(e.orig)}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 # Referral Codes
 @router.post("/admin/referral-codes")
