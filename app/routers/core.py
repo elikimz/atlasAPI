@@ -361,8 +361,7 @@ async def start_certification(
     user_cert = uc_result.scalars().first()
     
     if user_cert:
-        if user_cert.status == "completed":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Certification already completed")
+        # If already completed or in progress, just return success so the UI can proceed
         return {"message": f"Certification already {user_cert.status}"}
     
     new_user_cert = models.UserCertification(
