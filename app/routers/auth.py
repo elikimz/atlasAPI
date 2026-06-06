@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 import random
 import string
@@ -13,6 +14,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone, timedelta
 
 from app.database.database import get_async_db
 from app.models import models
@@ -48,17 +50,52 @@ class Token(BaseModel):
     token_type: str
 
 # --- Helpers ---
-async def send_email(to_email: str, subject: str, body: str):
-    """Asynchronous, non-blocking email sender."""
+async def send_email(to_email: str, subject: str, otp_code: str):
+    """Asynchronous, non-blocking email sender with HTML template."""
     def _send():
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_SENDER
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Your Verification Code - AdPulseAI"
+        msg["From"] = f"AdPulseAI Support <{settings.EMAIL_SENDER}>"
         msg["To"] = to_email
+        
+        # Plain text fallback
+        text = f"Your AdPulseAI verification code is: {otp_code}\n\nThis code will expire in 15 minutes."
+        
+        # Professional HTML template
+        html = f"""
+        <html>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9fafb; margin: 0; padding: 40px;">
+            <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; padding: 40px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid #e5e7eb;">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h1 style="color: #5932EA; margin: 0; font-size: 28px; font-weight: 700;">AdPulseAI</h1>
+                </div>
+                <h2 style="color: #111827; font-size: 22px; font-weight: 700; text-align: center; margin-bottom: 10px;">Verify your email</h2>
+                <p style="color: #4b5563; font-size: 16px; text-align: center; margin-bottom: 30px; line-height: 1.5;">
+                    Please use the following 6-digit verification code to sign in to your account.
+                </p>
+                <div style="background-color: #f3f0ff; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 30px; border: 1px dashed #5932EA;">
+                    <span style="font-size: 36px; font-weight: 800; color: #5932EA; letter-spacing: 10px; font-family: monospace;">{otp_code}</span>
+                </div>
+                <p style="color: #9ca3af; font-size: 14px; text-align: center; margin-bottom: 0;">
+                    This code will expire in <b>15 minutes</b>.
+                </p>
+                <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 30px 0;">
+                <p style="color: #9ca3af; font-size: 12px; text-align: center; line-height: 1.5;">
+                    If you didn't request this code, you can safely ignore this email.<br>
+                    &copy; 2024 AdPulseAI. All rights reserved.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(text, "plain"))
+        msg.attach(MIMEText(html, "html"))
+        
         try:
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
                 server.starttls()
-                server.login(EMAIL_SENDER, EMAIL_APP_PASSWORD)
+                server.login(settings.EMAIL_SENDER, settings.EMAIL_APP_PASSWORD)
                 server.send_message(msg)
             return True
         except Exception as e:
@@ -187,11 +224,7 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
         print(f"ARCH-LOG [OTP GENERATED]: {otp_code} for {email}")
 
         # 3. Send Email (Non-blocking)
-        await send_email(
-            email,
-            "Your Verification Code - Adpulse AI",
-            f"Your verification code is: {otp_code}\n\nThis code will expire in 15 minutes."
-        )
+        await send_email(email, "Your Verification Code - AdPulseAI", otp_code)
 
         return {"message": "Verification code sent to your email."}
 
