@@ -442,19 +442,27 @@ class WithdrawalRequest(BaseModel):
     account_id: int
     password: str
 
-class WithdrawalPasswordSet(BaseModel):
-    password: str
+class WithdrawalPasswordUpdate(BaseModel):
+    current_password: Optional[str] = None
+    new_password: str
 
 @router.post("/settings/withdrawal-password", response_model=dict)
-async def set_withdrawal_password(
-    data: WithdrawalPasswordSet,
+async def update_withdrawal_password(
+    data: WithdrawalPasswordUpdate,
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # For simplicity, we'll store it directly for now, but in production, use hashing
-    current_user.withdrawal_password = data.password
+    # If a password already exists, require the current one
+    if current_user.withdrawal_password:
+        if not data.current_password:
+            raise HTTPException(status_code=400, detail="Current withdrawal password is required to set a new one.")
+        if current_user.withdrawal_password != data.current_password:
+            raise HTTPException(status_code=400, detail="Incorrect current withdrawal password.")
+    
+    # Update to new password
+    current_user.withdrawal_password = data.new_password
     await db.commit()
-    return {"message": "Withdrawal password set successfully"}
+    return {"message": "Withdrawal password updated successfully"}
 
 @router.post("/payments/withdraw", response_model=dict)
 async def request_withdrawal(
@@ -514,18 +522,66 @@ class UserProfile(BaseModel):
     first_name: Optional[str]
     last_name: Optional[str]
     email: str
+    has_withdrawal_password: bool
 
 class UserProfileUpdate(BaseModel):
     first_name: Optional[str]
     last_name: Optional[str]
+
+class AppConfigSchema(BaseModel):
+    key: str
+    value: str
 
 @router.get("/settings/profile", response_model=UserProfile)
 async def get_profile(current_user: models.User = Depends(get_current_user)):
     return {
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
-        "email": current_user.email
+        "email": current_user.email,
+        "has_withdrawal_password": bool(current_user.withdrawal_password)
     }
+
+@router.get("/settings/config", response_model=List[AppConfigSchema])
+async def get_app_config(db: AsyncSession = Depends(get_async_db)):
+    result = await db.execute(select(models.AppConfig))
+    configs = result.scalars().all()
+    
+    # Ensure default keys exist if not in DB
+    default_keys = {
+        "telegram_link": "https://t.me/AdPulseAI",
+        "whatsapp_number": "+1234567890",
+        "support_ticket_url": "https://help.adpulseai.com"
+    }
+    
+    config_map = {c.key: c.value for c in configs}
+    response = []
+    for key, default_value in default_keys.items():
+        response.append({
+            "key": key,
+            "value": config_map.get(key, default_value)
+        })
+    return response
+
+@router.put("/admin/config", response_model=dict)
+async def update_app_config(
+    config_data: AppConfigSchema,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    result = await db.execute(select(models.AppConfig).filter(models.AppConfig.key == config_data.key))
+    config = result.scalar_one_or_none()
+    
+    if config:
+        config.value = config_data.value
+    else:
+        config = models.AppConfig(key=config_data.key, value=config_data.value)
+        db.add(config)
+    
+    await db.commit()
+    return {"message": f"Configuration {config_data.key} updated successfully"}
 
 @router.put("/settings/profile", response_model=UserProfile)
 async def update_profile(

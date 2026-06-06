@@ -200,3 +200,12 @@ class WithdrawalAccount(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="withdrawal_accounts")
+
+class AppConfig(Base):
+    __tablename__ = "app_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, index=True, nullable=False)
+    value = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
