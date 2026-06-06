@@ -33,3 +33,4 @@ python-multipart==0.0.29
 python-jose[cryptography]
 passlib[bcrypt]
 pytest
+fpdf2==2.8.2
