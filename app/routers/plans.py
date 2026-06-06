@@ -129,7 +129,8 @@ async def upgrade_plan(
         )
         .order_by(models.UserPlanHistory.purchased_at.desc())
     )
-    old_user_plan_entry = result.scalar_one_or_none()
+    # Use .scalars().first() to avoid MultipleResultsFound error
+    old_user_plan_entry = result.scalars().first()
     refund_amount = old_user_plan_entry.purchase_price if old_user_plan_entry else current_user.plan_purchase_price or 0.0
 
     # Upgrades require the net additional amount after the old plan refund.
