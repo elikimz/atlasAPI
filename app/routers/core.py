@@ -327,7 +327,9 @@ async def get_certifications(
 
         response = []
         for cert in all_certs:
-            status = user_certs.get(cert.id, "available")
+            # If user is globally marked as trained, every certification should show as completed
+            status = "completed" if current_user.is_trained else user_certs.get(cert.id, "available")
+            
             response.append({
                 "id": cert.id, 
                 "name": cert.name, 
@@ -348,6 +350,10 @@ async def start_certification(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # If user is already trained, they shouldn't be starting new certifications
+    if current_user.is_trained:
+        return {"message": "User already completed all training"}
+
     cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
     cert = cert_result.scalar_one_or_none()
     
