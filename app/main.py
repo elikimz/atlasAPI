@@ -36,7 +36,11 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_date TIMESTAMP WITH TIME ZONE"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_purchase_price FLOAT DEFAULT 0.0"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trained BOOLEAN DEFAULT FALSE"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'user'"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_password VARCHAR"))
+            
+            # Backfill admin role
+            await conn.execute(text("UPDATE users SET role = 'admin' WHERE email = 'elijahkimani1293@gmail.com' OR is_admin = TRUE"))
             
             # Video tasks table migrations
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0"))

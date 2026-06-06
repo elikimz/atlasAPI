@@ -26,7 +26,7 @@ class VideoTaskCreate(BaseModel):
 router = APIRouter()
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):
-    if not current_user.is_admin:
+    if current_user.role != "admin" and not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     return current_user
 
@@ -216,3 +216,85 @@ async def reject_payment(
     payment.admin_notes = admin_notes
     await db.commit()
     return {"message": "Payment rejected"}
+
+# --- User Management ---
+@router.get("/admin/users")
+async def get_all_users(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    return result.scalars().all()
+
+@router.put("/admin/users/{user_id}/role")
+async def update_user_role(
+    user_id: int,
+    role: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    if role not in ["user", "admin"]:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.role = role
+    user.is_admin = (role == "admin")
+    await db.commit()
+    return {"message": f"User role updated to {role}"}
+
+# --- Plan Management ---
+@router.get("/admin/plans")
+async def get_admin_plans(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Plan
+    result = await db.execute(select(Plan))
+    return result.scalars().all()
+
+class PlanCreate(BaseModel):
+    name: str
+    price: float
+    daily_tasks_limit: int
+    validity_days: int
+    description: str
+    is_active: bool = True
+    is_upgrade_only: bool = False
+
+@router.post("/admin/plans")
+async def create_plan(
+    plan_data: PlanCreate,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import Plan
+    db_plan = Plan(**plan_data.dict())
+    db.add(db_plan)
+    await db.commit()
+    await db.refresh(db_plan)
+    return db_plan
+
+# --- Dashboard Stats ---
+@router.get("/admin/stats")
+async def get_admin_stats(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    from app.models.models import User, Payment, VideoTask, UserVideoTask
+    from sqlalchemy import func
+    
+    users_count = await db.execute(select(func.count(User.id)))
+    pending_payments = await db.execute(select(func.count(Payment.id)).filter(Payment.status == "pending"))
+    total_payouts = await db.execute(select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "payout"))
+    total_deposits = await db.execute(select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "deposit"))
+    
+    return {
+        "total_users": users_count.scalar(),
+        "pending_payments": pending_payments.scalar(),
+        "total_payouts": total_payouts.scalar() or 0.0,
+        "total_deposits": total_deposits.scalar() or 0.0
+    }

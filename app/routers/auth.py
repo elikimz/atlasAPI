@@ -281,7 +281,7 @@ async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async
     await db.commit()
     print(f"ARCH-LOG [VERIFY SUCCESS]: {email}")
 
-    access_token = create_access_token(data={"sub": user.email})
+    access_token = create_access_token(data={"sub": user.email, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/auth/me")
@@ -301,9 +301,10 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         
     return {
         "id": current_user.id,
-        "email": current_user.email,
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
+        "email": current_user.email,
+        "role": current_user.role,
         "is_admin": current_user.is_admin,
         "is_trained": current_user.is_trained,
         "deposit_wallet_balance": current_user.deposit_wallet_balance,
