@@ -358,7 +358,7 @@ async def start_certification(
             models.UserCertification.certification_id == id
         )
     )
-    user_cert = uc_result.scalar_one_or_none()
+    user_cert = uc_result.scalars().first()
     
     if user_cert:
         if user_cert.status == "completed":
