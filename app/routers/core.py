@@ -522,27 +522,47 @@ async def get_certificate(
     pdf.cell(50, 5, 'Authorized Signature', align='C')
     pdf.line(187, 168, 237, 168)
     
-    # Badge / Seal (Simple geometric representation)
-    pdf.set_fill_color(89, 50, 234)
-    pdf.circle(148.5, 175, 15, 'F')
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font('Arial', 'B', 8)
-    pdf.set_xy(138.5, 172)
-    pdf.cell(20, 5, 'OFFICIAL', align='C')
-    pdf.set_xy(138.5, 177)
-    pdf.cell(20, 5, 'VERIFIED', align='C')
-    
-    # Output PDF - fpdf2 uses output() without dest='S' to return bytes, 
-    # or output(name) to write to file. For byte output, just call output().
+    # Badge / Seal (Simplified to avoid crashes on older FPDF versions)
     try:
-        pdf_output = pdf.output()
-    except Exception:
-        # Fallback for older fpdf versions
-        pdf_output = pdf.output(dest='S')
+        pdf.set_fill_color(89, 50, 234)
+        # Use ellipse instead of circle for better compatibility
+        pdf.ellipse(148.5 - 15, 175 - 15, 30, 30, 'F')
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font('Arial', 'B', 8)
+        pdf.set_xy(138.5, 172)
+        pdf.cell(20, 5, 'OFFICIAL', align='C')
+        pdf.set_xy(138.5, 177)
+        pdf.cell(20, 5, 'VERIFIED', align='C')
+    except Exception as e:
+        print(f"Drawing seal failed: {e}")
+
+    # Output PDF with robust handling for both FPDF 1.x and 2.x
+    try:
+        # FPDF 1.7.2 (common on servers) returns a string via dest='S'
+        # FPDF 2.x returns bytes via output()
+        try:
+            # Try 1.x style first as it's common on older server setups
+            pdf_output = pdf.output(dest='S')
+        except (TypeError, Exception):
+            # Fallback to 2.x style
+            pdf_output = pdf.output()
+            
+        # Ensure we return bytes
+        if isinstance(pdf_output, str):
+            pdf_output = pdf_output.encode('latin-1')
+        elif isinstance(pdf_output, bytearray):
+            pdf_output = bytes(pdf_output)
+            
+    except Exception as e:
+        print(f"PDF output failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate PDF")
     
     safe_last_name = (current_user.last_name or "User").replace(" ", "_")
     return Response(
         content=pdf_output,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{safe_last_name}.pdf"}
+        headers={
+            "Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{safe_last_name}.pdf",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
     )
