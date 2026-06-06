@@ -40,7 +40,7 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_password VARCHAR"))
             
             # Backfill admin role
-            await conn.execute(text("UPDATE users SET role = 'admin' WHERE email = 'elijahkimani1293@gmail.com' OR is_admin = TRUE"))
+            await conn.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = TRUE"))
             
             # Video tasks table migrations
             await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0"))

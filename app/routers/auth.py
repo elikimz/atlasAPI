@@ -166,7 +166,7 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
                 email=email,
                 first_name=otp_request.first_name.strip(),
                 last_name=otp_request.last_name.strip(),
-                is_admin=(email == "elijahkimani1293@gmail.com")
+                is_admin=False
             )
             
             # Generate referral code for new user
