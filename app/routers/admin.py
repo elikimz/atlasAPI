@@ -415,19 +415,27 @@ async def approve_payment(
     
     payment.status = "paid"
     
+    result = await db.execute(select(User).filter(User.id == payment.user_id))
+    user = result.scalar_one_or_none()
+    
     if payment.type == "deposit":
-        result = await db.execute(select(User).filter(User.id == payment.user_id))
-        user = result.scalar_one_or_none()
         if user:
             user.deposit_wallet_balance += payment.amount
+    elif payment.type == "payout" or payment.type == "withdrawal":
+        # For withdrawals, the balance is usually deducted at the time of request.
+        # Here we just mark it as paid.
+        payment.payout_date = datetime.now()
     
     await db.commit()
     return {"message": "Payment approved"}
 
+class RejectRequest(BaseModel):
+    admin_notes: str
+
 @router.post("/admin/payments/{payment_id}/reject")
 async def reject_payment(
     payment_id: int,
-    admin_notes: str,
+    reject_data: RejectRequest,
     db: AsyncSession = Depends(get_async_db),
     current_user: User = Depends(get_current_admin_user)
 ):
@@ -436,10 +444,21 @@ async def reject_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     
+    if payment.status != "pending":
+        raise HTTPException(status_code=400, detail="Payment is not pending")
+    
     payment.status = "rejected"
-    payment.admin_notes = admin_notes
+    payment.admin_notes = reject_data.admin_notes
+    
+    # If rejecting a withdrawal, refund the user
+    if payment.type == "payout" or payment.type == "withdrawal":
+        result = await db.execute(select(User).filter(User.id == payment.user_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.withdrawal_wallet_balance += payment.amount
+            
     await db.commit()
-    return {"message": "Payment rejected"}
+    return {"message": "Payment rejected and balance refunded if applicable"}
 
 @router.get("/admin/payments/{payment_id}")
 async def get_payment_by_id(
