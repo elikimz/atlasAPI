@@ -477,8 +477,11 @@ async def get_certificate(
     pdf.set_xy(0, 85)
     pdf.cell(297, 10, 'This is to certify that', align='C')
     
-    # User Name
-    user_name = f"{current_user.first_name} {current_user.last_name}"
+    # User Name with safety guards for null values
+    first = current_user.first_name or ""
+    last = current_user.last_name or ""
+    user_name = f"{first} {last}".strip() or current_user.email or "AdPulseAI User"
+    
     pdf.set_font('Arial', 'B', 32)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(0, 105)
@@ -529,11 +532,17 @@ async def get_certificate(
     pdf.set_xy(138.5, 177)
     pdf.cell(20, 5, 'VERIFIED', align='C')
     
-    # Output PDF
-    pdf_output = pdf.output(dest='S')
+    # Output PDF - fpdf2 uses output() without dest='S' to return bytes, 
+    # or output(name) to write to file. For byte output, just call output().
+    try:
+        pdf_output = pdf.output()
+    except Exception:
+        # Fallback for older fpdf versions
+        pdf_output = pdf.output(dest='S')
     
+    safe_last_name = (current_user.last_name or "User").replace(" ", "_")
     return Response(
         content=pdf_output,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{current_user.last_name}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{safe_last_name}.pdf"}
     )
