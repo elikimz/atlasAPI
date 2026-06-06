@@ -249,22 +249,20 @@ async def get_dashboard_summary(
             print(f"Error fetching recent activity: {e}")
             recent_activity = []
         
-        # Get earnings history for the last 7 days
+        # Get earnings history for the last 7 days (including today)
         earnings_history = []
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        days_map = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         today = datetime.now(timezone.utc)
         
-        for i in range(7):
-            # Calculate start and end of that day
-            day_offset = (today.weekday() - i) % 7
-            target_day = today - timedelta(days=day_offset)
+        for i in range(6, -1, -1):
+            target_day = today - timedelta(days=i)
             day_start = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             
             # Sum rewards for tasks completed on that day
-            earnings_result = await db.execute(
+            query = (
                 select(func.sum(models.VideoTask.reward_amount))
-                .join(models.UserVideoTask)
+                .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
                 .filter(
                     models.UserVideoTask.user_id == current_user.id,
                     models.UserVideoTask.status == "completed",
@@ -272,13 +270,10 @@ async def get_dashboard_summary(
                     models.UserVideoTask.completed_at < day_end
                 )
             )
+            earnings_result = await db.execute(query)
             daily_sum = earnings_result.scalar() or 0.0
             
-            # Also include referral rebates for that day
-            # (In a real app, you'd track these in a separate transactions table)
-            # For now, we'll just use the task earnings
-            
-            earnings_history.insert(0, {"day": days[day_start.weekday()], "value": daily_sum})
+            earnings_history.append({"day": days_map[day_start.weekday()], "value": float(daily_sum)})
 
         return {
             "footage_labeled_min": 0,
