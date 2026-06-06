@@ -28,13 +28,14 @@ class User(Base):
     withdrawal_password = Column(String, nullable=True) # Hashed withdrawal PIN/password
 
     # Relationships
-    certifications = relationship("UserCertification", back_populates="user")
-    referral_codes = relationship("ReferralCode", back_populates="user")
-    payments = relationship("Payment", back_populates="user")
-    evaluations = relationship("Evaluation", back_populates="user")
-    video_tasks = relationship("UserVideoTask", back_populates="user")
+    certifications = relationship("UserCertification", back_populates="user", cascade="all, delete-orphan")
+    referral_codes = relationship("ReferralCode", back_populates="user", cascade="all, delete-orphan")
+    payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
+    evaluations = relationship("Evaluation", back_populates="user", cascade="all, delete-orphan")
+    video_tasks = relationship("UserVideoTask", back_populates="user", cascade="all, delete-orphan")
     current_plan = relationship("Plan", foreign_keys=[current_plan_id])
-    withdrawal_accounts = relationship("WithdrawalAccount", back_populates="user")
+    withdrawal_accounts = relationship("WithdrawalAccount", back_populates="user", cascade="all, delete-orphan")
+    plan_history = relationship("UserPlanHistory", back_populates="user", cascade="all, delete-orphan")
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -62,7 +63,7 @@ class UserCertification(Base):
     __tablename__ = "user_certifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     certification_id = Column(Integer, ForeignKey("certifications.id"))
     status = Column(String, default="available") # available, in_progress, completed
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -83,7 +84,7 @@ class ReferralCode(Base):
     __tablename__ = "referral_codes"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     code = Column(String, unique=True, index=True, nullable=False)
     signups_count = Column(Integer, default=0)
     trained_count = Column(Integer, default=0)
@@ -96,8 +97,8 @@ class ReferralRelationship(Base):
     __tablename__ = "referral_relationships"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
-    referrer_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    referrer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     referral_code_used = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -108,7 +109,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     amount = Column(Float, nullable=False)
     period = Column(String, nullable=False)
     status = Column(String, default="pending") # pending, paid, in_progress, rejected, cancelled
@@ -126,7 +127,7 @@ class Evaluation(Base):
     __tablename__ = "evaluations"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     name = Column(String, nullable=False)
     episodes_completed = Column(Integer, default=0)
     total_episodes_required = Column(Integer, default=5)
@@ -150,7 +151,7 @@ class UserVideoTask(Base):
     __tablename__ = "user_video_tasks"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     video_task_id = Column(Integer, ForeignKey("video_tasks.id"))
     status = Column(String, default="pending") # pending, completed, rejected
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -174,7 +175,7 @@ class UserPlanHistory(Base):
     __tablename__ = "user_plan_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     plan_id = Column(Integer, ForeignKey("plans.id")) # Updated foreign key
     purchase_price = Column(Float, nullable=False)
     purchased_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -182,14 +183,14 @@ class UserPlanHistory(Base):
     status = Column(String, default="active") # active, expired, upgraded (New status)
     refunded_amount = Column(Float, default=0.0) # New field
 
-    user = relationship("User", backref="plan_history")
+    user = relationship("User", back_populates="plan_history")
     plan = relationship("Plan") # Updated relationship
 
 class WithdrawalAccount(Base):
     __tablename__ = "withdrawal_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     type = Column(String, nullable=False) # crypto, mpesa, wise, bank
     label = Column(String, nullable=True) # Primary, Work, etc.
     address = Column(String, nullable=False) # Wallet address or phone number
