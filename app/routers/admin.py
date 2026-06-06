@@ -157,7 +157,17 @@ async def get_all_video_tasks(
     current_user: User = Depends(get_current_admin_user)
 ):
     result = await db.execute(select(VideoTask))
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "video_url": t.video_url,
+            "reward_amount": t.reward_amount,
+            "created_at": t.created_at.isoformat() if t.created_at else None
+        } for t in tasks
+    ]
 
 @router.get("/admin/video-tasks/{task_id}")
 async def get_video_task_by_id(
@@ -224,7 +234,18 @@ async def get_all_certifications(
     current_user: User = Depends(get_current_admin_user)
 ):
     result = await db.execute(select(Certification))
-    return result.scalars().all()
+    certs = result.scalars().all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "description": c.description,
+            "estimated_time": c.estimated_time,
+            "video_url": c.video_url,
+            "steps_count": c.steps_count,
+            "is_active": c.is_active
+        } for c in certs
+    ]
 
 @router.get("/admin/certifications/{cert_id}")
 async def get_certification_by_id(
@@ -279,7 +300,23 @@ async def get_all_users(
     current_user: User = Depends(get_current_admin_user)
 ):
     result = await db.execute(select(User).order_by(User.created_at.desc()))
-    return result.scalars().all()
+    users = result.scalars().all()
+    return [
+        {
+            "id": u.id,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "email": u.email,
+            "role": u.role,
+            "is_admin": u.is_admin,
+            "is_trained": u.is_trained,
+            "deposit_wallet_balance": u.deposit_wallet_balance,
+            "withdrawal_wallet_balance": u.withdrawal_wallet_balance,
+            "performance_bonus_balance": u.performance_bonus_balance,
+            "referral_code": u.referral_code,
+            "created_at": u.created_at.isoformat() if u.created_at else None
+        } for u in users
+    ]
 
 @router.get("/admin/users/{user_id}")
 async def get_user_by_id(
@@ -336,7 +373,29 @@ async def get_all_payments(
     result = await db.execute(
         select(Payment).options(selectinload(Payment.user)).order_by(Payment.created_at.desc())
     )
-    return result.scalars().all()
+    payments = result.scalars().all()
+    return [
+        {
+            "id": p.id,
+            "user_id": p.user_id,
+            "amount": p.amount,
+            "period": p.period,
+            "status": p.status,
+            "type": p.type,
+            "payment_method": p.payment_method,
+            "network": p.network,
+            "proof_url": p.proof_url,
+            "admin_notes": p.admin_notes,
+            "payout_date": p.payout_date.isoformat() if p.payout_date else None,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "user": {
+                "id": p.user.id,
+                "email": p.user.email,
+                "first_name": p.user.first_name,
+                "last_name": p.user.last_name
+            } if p.user else None
+        } for p in payments
+    ]
 
 @router.post("/admin/payments/{payment_id}/approve")
 async def approve_payment(

@@ -144,7 +144,6 @@ class VideoTask(Base):
     description = Column(String, nullable=True)
     video_url = Column(String, nullable=False)
     reward_amount = Column(Float, default=0.0)
-    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class UserVideoTask(Base):
