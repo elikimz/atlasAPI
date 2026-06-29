@@ -189,7 +189,10 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
 # --- Existing Endpoints ---
 
 class DashboardSummary(BaseModel):
-    footage_labeled_min: int
+    footage_labeled_min: float
+    today_earnings: float
+    this_week_earnings: float
+    this_month_earnings: float
     approved_roles: str
     certifications_earned: int
     active_tasks: int
@@ -197,6 +200,7 @@ class DashboardSummary(BaseModel):
     pending_videos: int
     recent_activity: List[dict]
     earnings_history: List[dict]
+    total_tasks_completed: int
 
 class LearningHubContent(BaseModel):
     guidelines: str
@@ -209,6 +213,29 @@ async def get_dashboard_summary(
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
+        # Calculate earnings
+        today = datetime.now(timezone.utc)
+        today_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today.weekday())
+        month_start = today_start.replace(day=1)
+
+        async def get_earnings_sum(start_date: datetime):
+            query = (
+                select(func.sum(models.VideoTask.reward_amount))
+                .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
+                .filter(
+                    models.UserVideoTask.user_id == current_user.id,
+                    models.UserVideoTask.status == "completed",
+                    models.UserVideoTask.completed_at >= start_date
+                )
+            )
+            result = await db.execute(query)
+            return result.scalar() or 0.0
+
+        today_earnings = await get_earnings_sum(today_start)
+        this_week_earnings = await get_earnings_sum(week_start)
+        this_month_earnings = await get_earnings_sum(month_start)
+
         # Count certifications
         try:
             cert_result = await db.execute(
@@ -221,6 +248,19 @@ async def get_dashboard_summary(
         except Exception as e:
             print(f"Error counting certifications: {e}")
             completed_certs = 0
+
+        # Calculate total tasks completed
+        total_tasks_completed_result = await db.execute(
+            select(func.count(models.UserVideoTask.id))
+            .filter(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.status == "completed"
+            )
+        )
+        total_tasks_completed = total_tasks_completed_result.scalar() or 0
+
+        # Calculate footage labeled in minutes (1 task = 0.3 seconds)
+        footage_labeled_min = round((total_tasks_completed * 0.3) / 60, 2)
         
         # Count active (available) tasks within user's plan scope
         user_scoped_tasks = []
@@ -307,27 +347,35 @@ async def get_dashboard_summary(
             earnings_history.append({"day": days_map[day_start.weekday()], "value": float(daily_sum)})
 
         return {
-            "footage_labeled_min": 0,
+            "footage_labeled_min": footage_labeled_min,
+            "today_earnings": today_earnings,
+            "this_week_earnings": this_week_earnings,
+            "this_month_earnings": this_month_earnings,
             "approved_roles": "None yet",
             "certifications_earned": completed_certs,
             "active_tasks": active_tasks_count,
             "completed_tasks": completed_tasks_count,
             "pending_videos": pending_videos_count,
             "recent_activity": recent_activity,
-            "earnings_history": earnings_history
+            "earnings_history": earnings_history,
+            "total_tasks_completed": total_tasks_completed
         }
     except Exception as e:
         print(f"Fatal error in dashboard summary: {e}")
         # Return safe defaults
         return {
-            "footage_labeled_min": 0,
+            "footage_labeled_min": 0.0,
+            "today_earnings": 0.0,
+            "this_week_earnings": 0.0,
+            "this_month_earnings": 0.0,
             "approved_roles": "None yet",
             "certifications_earned": 0,
             "active_tasks": 0,
             "completed_tasks": 0,
             "pending_videos": 0,
             "recent_activity": [],
-            "earnings_history": []
+            "earnings_history": [],
+            "total_tasks_completed": 0
         }
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
