@@ -36,6 +36,12 @@ class ReferralSummary(BaseModel):
     task_rebate: float
     total_invites: int
     active_invites: int
+    tier_a_invite_earnings: float
+    tier_b_invite_earnings: float
+    tier_c_invite_earnings: float
+    tier_a_task_rebate: float
+    tier_b_task_rebate: float
+    tier_c_task_rebate: float
 
 class ReferralCodeSchema(BaseModel):
     code: str
@@ -71,6 +77,14 @@ async def get_referral_summary(
         total_signups = sum(getattr(c, "signups_count", 0) or 0 for c in codes)
         total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
         
+        t_a_invite = sum(getattr(c, "tier_a_invite_earnings", 0.0) or 0.0 for c in codes)
+        t_b_invite = sum(getattr(c, "tier_b_invite_earnings", 0.0) or 0.0 for c in codes)
+        t_c_invite = sum(getattr(c, "tier_c_invite_earnings", 0.0) or 0.0 for c in codes)
+        
+        t_a_rebate = sum(getattr(c, "tier_a_task_rebate", 0.0) or 0.0 for c in codes)
+        t_b_rebate = sum(getattr(c, "tier_b_task_rebate", 0.0) or 0.0 for c in codes)
+        t_c_rebate = sum(getattr(c, "tier_c_task_rebate", 0.0) or 0.0 for c in codes)
+        
         # Calculate active invites (users who have an active plan)
         # We need to find all users referred by this user's codes
         active_invites_count = 0
@@ -103,7 +117,13 @@ async def get_referral_summary(
             "users_referred": total_signups,
             "task_rebate": total_task_rebate,
             "total_invites": total_invites_count,
-            "active_invites": active_invites_count
+            "active_invites": active_invites_count,
+            "tier_a_invite_earnings": t_a_invite,
+            "tier_b_invite_earnings": t_b_invite,
+            "tier_c_invite_earnings": t_c_invite,
+            "tier_a_task_rebate": t_a_rebate,
+            "tier_b_task_rebate": t_b_rebate,
+            "tier_c_task_rebate": t_c_rebate
         }
     except Exception as e:
         print(f"Safe Referral Summary Error: {e}")

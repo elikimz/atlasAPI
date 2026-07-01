@@ -142,16 +142,16 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         current_balance = getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0
         setattr(current_user, "withdrawal_wallet_balance", current_balance + video_task.reward_amount)
     
-    # --- Multi-Tier Referral Rebates ---
-    # Tier A: 10%, Tier B: 4%, Tier C: 1%
-    rebate_config = [("A", 0.10), ("B", 0.04), ("C", 0.01)]
+    # --- Multi-Tier Referral Rebates (Flat-Rate) ---
+    # Tier A: $0.01, Tier B: $0.005, Tier C: $0.0025
+    rebate_config = [("tier_a_task_rebate", 0.01), ("tier_b_task_rebate", 0.005), ("tier_c_task_rebate", 0.0025)]
     
-    # Fetch referrer from the new ReferralRelationship table
+    # Fetch referrer from the ReferralRelationship table
     rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == current_user.id))
     rel = rel_result.scalar_one_or_none()
     current_referrer_id = rel.referrer_id if rel else None
     
-    for tier_label, percentage in rebate_config:
+    for field_name, flat_amount in rebate_config:
         if not current_referrer_id:
             break
             
@@ -159,19 +159,17 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         referrer = referrer_result.scalar_one_or_none()
         
         if referrer:
-            rebate_amount = video_task.reward_amount * percentage
-            
             # 1. Update referrer's withdrawal wallet
-            if hasattr(referrer, "withdrawal_wallet_balance"):
-                ref_balance = getattr(referrer, "withdrawal_wallet_balance", 0.0) or 0.0
-                setattr(referrer, "withdrawal_wallet_balance", ref_balance + rebate_amount)
+            referrer.withdrawal_wallet_balance = (referrer.withdrawal_wallet_balance or 0.0) + flat_amount
             
             # 2. Update referral code stats
             code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1))
             ref_code = code_result.scalar_one_or_none()
             if ref_code:
-                current_rebate_total = getattr(ref_code, "task_rebate_amount", 0.0) or 0.0
-                setattr(ref_code, "task_rebate_amount", current_rebate_total + rebate_amount)
+                current_val = getattr(ref_code, field_name, 0.0) or 0.0
+                setattr(ref_code, field_name, current_val + flat_amount)
+                # Also update legacy total
+                ref_code.task_rebate_amount = (ref_code.task_rebate_amount or 0.0) + flat_amount
             
             # Move up the chain using the relationship table
             next_rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == referrer.id))
@@ -201,6 +199,11 @@ class DashboardSummary(BaseModel):
     recent_activity: List[dict]
     earnings_history: List[dict]
     total_tasks_completed: int
+    total_earnings: float
+    task_earnings: float
+    referral_commission: float
+    task_rebate_commission: float
+    bonus_refunded: float
 
 class LearningHubContent(BaseModel):
     guidelines: str
@@ -320,6 +323,33 @@ async def get_dashboard_summary(
             print(f"Error fetching recent activity: {e}")
             recent_activity = []
         
+        # Calculate total earnings breakdown
+        # Total Earnings = [Task Earnings] + [Referral Commission] + [Task Rebate Commission] + [Bonus Refunded Upon Upgrade]
+        
+        # 1. Task Earnings (Sum of all completed video tasks)
+        task_earnings_query = (
+            select(func.sum(models.VideoTask.reward_amount))
+            .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
+            .filter(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.status == "completed"
+            )
+        )
+        task_earnings_res = await db.execute(task_earnings_query)
+        task_earnings = task_earnings_res.scalar() or 0.0
+        
+        # 2. Referral Commission & Task Rebate Commission
+        ref_code_query = select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+        ref_codes_res = await db.execute(ref_code_query)
+        ref_codes = ref_codes_res.scalars().all()
+        referral_commission = sum(getattr(c, "earned_amount", 0.0) or 0.0 for c in ref_codes)
+        task_rebate_commission = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in ref_codes)
+        
+        # 3. Bonus Refunded Upon Upgrade
+        bonus_refunded = current_user.performance_bonus_balance or 0.0
+        
+        total_earnings = task_earnings + referral_commission + task_rebate_commission + bonus_refunded
+
         # Get earnings history for the last 7 days (including today)
         earnings_history = []
         days_map = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -358,7 +388,12 @@ async def get_dashboard_summary(
             "pending_videos": pending_videos_count,
             "recent_activity": recent_activity,
             "earnings_history": earnings_history,
-            "total_tasks_completed": total_tasks_completed
+            "total_tasks_completed": total_tasks_completed,
+            "total_earnings": total_earnings,
+            "task_earnings": task_earnings,
+            "referral_commission": referral_commission,
+            "task_rebate_commission": task_rebate_commission,
+            "bonus_refunded": bonus_refunded
         }
     except Exception as e:
         print(f"Fatal error in dashboard summary: {e}")

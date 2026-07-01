@@ -23,6 +23,7 @@ class User(Base):
     plan_start_date = Column(DateTime(timezone=True), nullable=True)
     plan_expiry_date = Column(DateTime(timezone=True), nullable=True)
     plan_purchase_price = Column(Float, default=0.0)
+    has_purchased_first_package = Column(Boolean, default=False)
 
     # Security
     withdrawal_password = Column(String, nullable=True) # Hashed withdrawal PIN/password
@@ -89,8 +90,19 @@ class ReferralCode(Base):
     code = Column(String, unique=True, index=True, nullable=False)
     signups_count = Column(Integer, default=0)
     trained_count = Column(Integer, default=0)
+    # Tier-specific invite commissions
+    tier_a_invite_earnings = Column(Float, default=0.0)
+    tier_b_invite_earnings = Column(Float, default=0.0)
+    tier_c_invite_earnings = Column(Float, default=0.0)
+    
+    # Tier-specific task rebates
+    tier_a_task_rebate = Column(Float, default=0.0)
+    tier_b_task_rebate = Column(Float, default=0.0)
+    tier_c_task_rebate = Column(Float, default=0.0)
+
+    # Legacy fields (keep for backward compatibility or sum)
     earned_amount = Column(Float, default=0.0)
-    task_rebate_amount = Column(Float, default=0.0) # New: specifically for task-based rebates
+    task_rebate_amount = Column(Float, default=0.0)
 
     user = relationship("User", back_populates="referral_codes")
 

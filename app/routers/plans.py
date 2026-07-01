@@ -87,6 +87,46 @@ async def purchase_plan(
     db.add(user_plan_history)
     db.add(current_user)
     
+    # --- Referral Commission Logic (First Purchase Only) ---
+    if not current_user.has_purchased_first_package and plan.price > 0:
+        current_user.has_purchased_first_package = True
+        
+        # 3-Tier Commission Split: Tier A (10%), Tier B (4%), Tier C (1%)
+        commission_config = [("tier_a_invite_earnings", 0.10), ("tier_b_invite_earnings", 0.04), ("tier_c_invite_earnings", 0.01)]
+        
+        # Find upline referrers
+        rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == current_user.id))
+        rel = rel_result.scalar_one_or_none()
+        current_upline_id = rel.referrer_id if rel else None
+        
+        for field_name, percentage in commission_config:
+            if not current_upline_id:
+                break
+                
+            upline_result = await db.execute(select(models.User).filter(models.User.id == current_upline_id))
+            upline = upline_result.scalar_one_or_none()
+            
+            if upline:
+                commission_amount = plan.price * percentage
+                # Add to upline's withdrawal balance
+                upline.withdrawal_wallet_balance = (upline.withdrawal_wallet_balance or 0.0) + commission_amount
+                
+                # Update upline's referral code stats
+                code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == upline.id).limit(1))
+                ref_code = code_result.scalar_one_or_none()
+                if ref_code:
+                    current_val = getattr(ref_code, field_name, 0.0) or 0.0
+                    setattr(ref_code, field_name, current_val + commission_amount)
+                    # Also update legacy total
+                    ref_code.earned_amount = (ref_code.earned_amount or 0.0) + commission_amount
+                
+                # Move up to next tier
+                next_rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == upline.id))
+                next_rel = next_rel_result.scalar_one_or_none()
+                current_upline_id = next_rel.referrer_id if next_rel else None
+            else:
+                break
+
     # Auto-assign tasks for the new plan
     result_tasks = await db.execute(select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id))
     plan_tasks = result_tasks.scalars().all()
@@ -163,6 +203,10 @@ async def upgrade_plan(
     current_user.deposit_wallet_balance -= required_additional
     # Also record the refund in the performance bonus balance as requested
     current_user.performance_bonus_balance = (current_user.performance_bonus_balance or 0.0) + refund_amount
+    
+    # Ensure first purchase flag is set if they upgrade from a paid plan (though usually purchase comes first)
+    if plan.price > 0:
+        current_user.has_purchased_first_package = True
 
     if old_user_plan_entry:
         old_user_plan_entry.status = "upgraded"
