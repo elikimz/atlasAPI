@@ -410,7 +410,12 @@ async def get_dashboard_summary(
             "pending_videos": 0,
             "recent_activity": [],
             "earnings_history": [],
-            "total_tasks_completed": 0
+            "total_tasks_completed": 0,
+            "total_earnings": 0.0,
+            "task_earnings": 0.0,
+            "referral_commission": 0.0,
+            "task_rebate_commission": 0.0,
+            "bonus_refunded": 0.0
         }
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
