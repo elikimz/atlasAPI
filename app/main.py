@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from sqlalchemy import select, text
-from app.routers import auth, core, extra, admin, plans
+from app.routers import auth, core, extra, admin, plans, notifications
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database.database import engine, Base, AsyncSessionLocal
@@ -21,6 +21,7 @@ app.include_router(core.router)
 app.include_router(extra.router)
 app.include_router(admin.router)
 app.include_router(plans.router)
+app.include_router(notifications.router)
 
 async def run_migrations():
     """Run lightweight migrations to ensure columns exist."""

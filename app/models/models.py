@@ -224,3 +224,16 @@ class AppConfig(Base):
     value = Column(String, nullable=False)
     description = Column(String, nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True) # Null means global notification
+    title = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    type = Column(String, default="info") # info, success, warning, error
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="notifications")
