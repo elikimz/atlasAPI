@@ -213,12 +213,7 @@ async def upgrade_plan(
     Upgrade to a higher-tier plan.
 
     Deposit Wallet Rule: the FULL price of the new plan is deducted from deposit_wallet_balance.
-    The old plan price is refunded after a 3-day lock period.
-
-    Upgrade Bonus Refund (3-Day Lock):
-    - The old plan's purchase price is logged in upgrade_refunds with status='pending'.
-    - release_at is set to exactly 72 hours from now.
-    - The amount is released to withdrawal_wallet_balance after 72h.
+    The old plan price is refunded IMMEDIATELY to the Withdrawal Wallet.
 
     Invite Commission Rule (CRITICAL):
     - Plan upgrades NEVER generate invite commissions for the upline.
@@ -275,7 +270,7 @@ async def upgrade_plan(
                 f"Insufficient deposit wallet balance to upgrade. "
                 f"Required: ${new_plan.price:.2f}. "
                 f"Your previous plan price (${refund_amount:.2f}) will be refunded "
-                f"to your withdrawal wallet after a 3-day lock period."
+                f"immediately to your withdrawal wallet."
             )
         )
 
@@ -295,16 +290,28 @@ async def upgrade_plan(
         db.add(old_user_plan_entry)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 3-Day Lock Mechanism for Upgrade Refund
-    # Log the refund as 'pending' — do NOT credit to any wallet yet.
-    # The amount will be released to withdrawal_wallet_balance after 72 hours.
+    # IMMEDIATE Refund Mechanism for Upgrade
+    # Credit the amount to withdrawal_wallet_balance IMMEDIATELY.
     # ─────────────────────────────────────────────────────────────────────────
     if refund_amount > 0:
+        # Credit to withdrawal wallet (cashable)
+        current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) + refund_amount
+        
+        # Log to EarningsLog for period tracking
+        db.add(models.EarningsLog(
+            user_id=current_user.id,
+            amount=refund_amount,
+            type="upgrade_refund",
+            description=f"Immediate upgrade refund for previous plan"
+        ))
+        
+        # Also log in upgrade_refunds table for audit trail (marked as released)
         upgrade_refund = models.UpgradeRefund(
             user_id=current_user.id,
             amount=refund_amount,
-            status="pending",
-            release_at=now + timedelta(hours=72),
+            status="released",
+            release_at=now,
+            released_at=now,
             plan_history_id=old_user_plan_entry.id if old_user_plan_entry else None,
         )
         db.add(upgrade_refund)
@@ -364,8 +371,8 @@ async def release_pending_refunds(
     current_user: models.User = Depends(get_current_active_user)
 ):
     """
-    Check for and release any upgrade refunds that have passed their 72h lock.
-    Released funds are moved to withdrawal_wallet_balance (cashable).
+    Legacy endpoint - kept for backward compatibility.
+    Check for and release any legacy upgrade refunds that have passed their 72h lock.
     """
     now = _utc_now()
     query = select(models.UpgradeRefund).filter(
@@ -390,7 +397,7 @@ async def release_pending_refunds(
             user_id=current_user.id,
             amount=refund.amount,
             type="upgrade_refund",
-            description=f"Released upgrade refund for previous plan"
+            description=f"Released legacy upgrade refund for previous plan"
         ))
 
     if released_total > 0:
@@ -398,6 +405,6 @@ async def release_pending_refunds(
         await db.commit()
 
     return {
-        "message": f"Released {len(pending_refunds)} refunds totaling ${released_total:.2f}",
+        "message": f"Released {len(pending_refunds)} legacy refunds totaling ${released_total:.2f}",
         "released_amount": released_total
     }
