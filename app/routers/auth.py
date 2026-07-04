@@ -333,9 +333,29 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
     }
 
 @router.get("/wallet/balances")
-async def get_wallet_balances(current_user: models.User = Depends(get_current_user)):
+async def get_wallet_balances(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Return wallet balances.
+    - deposit_wallet_balance: Funds recharged minus plan purchases/upgrades (never includes earnings).
+    - withdrawal_wallet_balance: Cashable earnings (task rewards, rebates, commissions, released refunds).
+    - performance_bonus_balance: Legacy field kept for backward compatibility.
+    - pending_refund: Upgrade refund amount still within the 3-day lock period (not yet cashable).
+    """
+    from sqlalchemy import func as sqlfunc
+    pending_res = await db.execute(
+        select(sqlfunc.sum(models.UpgradeRefund.amount)).filter(
+            models.UpgradeRefund.user_id == current_user.id,
+            models.UpgradeRefund.status == "pending"
+        )
+    )
+    pending_refund = pending_res.scalar() or 0.0
+
     return {
         "deposit_wallet_balance": current_user.deposit_wallet_balance,
         "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance,
         "performance_bonus_balance": current_user.performance_bonus_balance,
+        "pending_refund": pending_refund,
     }

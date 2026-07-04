@@ -17,48 +17,49 @@ router = APIRouter()
 # --- Task Endpoints ---
 
 @router.get("/tasks/available")
-async def get_available_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
-    # Fetch tasks assigned to user's plan OR tasks they already have progress in
+async def get_available_tasks(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user)
+):
     query = select(models.VideoTask).outerjoin(
-        models.UserVideoTask, 
+        models.UserVideoTask,
         (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
     ).filter(
         (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
     )
-    
+
     result = await db.execute(query)
     visible_tasks = result.scalars().all()
 
-    # Fetch tasks status for the current user
     uvt_result = await db.execute(
-        select(models.UserVideoTask).filter(
-            models.UserVideoTask.user_id == current_user.id
-        )
+        select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
     )
     user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
 
-    # Return visible tasks with their status
     response = []
     for task in visible_tasks:
-        status = user_tasks.get(task.id, "available")
-        # Only show tasks that are NOT completed in the "available" list
-        if status != "completed":
+        task_status = user_tasks.get(task.id, "available")
+        if task_status != "completed":
             response.append({
                 "id": task.id,
                 "title": task.title,
                 "description": task.description,
                 "video_url": task.video_url,
                 "reward_amount": task.reward_amount,
-                "status": status
+                "status": task_status
             })
 
     return response
 
+
 @router.get("/tasks/all", response_model=List[AvailableTask])
-async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
+async def get_all_tasks(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user)
+):
     """Return all video tasks for the user's plan or their assigned tasks."""
     query = select(models.VideoTask).outerjoin(
-        models.UserVideoTask, 
+        models.UserVideoTask,
         (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
     ).filter(
         (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
@@ -68,13 +69,35 @@ async def get_all_tasks(db: AsyncSession = Depends(get_async_db), current_user: 
 
 
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
-async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = Depends(get_async_db), current_user: models.User = Depends(get_current_user)):
+async def complete_task(
+    task_completion: UserTaskCompletion,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Complete a task and distribute rewards.
+
+    Rule 1 — User's Own Task Earnings:
+      Credit the task reward_amount directly to the user's withdrawal_wallet_balance.
+      This amount is counted in Task Earnings → Total Earnings.
+
+    Rule 2 — Multi-Tier Task Rebates:
+      Walk up the referral chain (up to 3 tiers) and credit flat rebate amounts
+      to each upline's withdrawal_wallet_balance and referral code stats.
+      Tier A: $0.01, Tier B: $0.005, Tier C: $0.0025
+    """
     # 1. Check Plan Validity
     if not current_user.current_plan_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No active plan found. Please purchase a plan to start earning.")
-    
-    if current_user.plan_expiry_date and current_user.plan_expiry_date < datetime.now(timezone.utc):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your plan has expired. Please upgrade to a higher tier to continue earning.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active plan found. Please purchase a plan to start earning."
+        )
+
+    if current_user.plan_expiry_date and _as_utc(current_user.plan_expiry_date) < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your plan has expired. Please upgrade to a higher tier to continue earning."
+        )
 
     # 2. Check Daily Task Limit
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -87,31 +110,37 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         )
     )
     tasks_completed_today = daily_count_result.scalar() or 0
-    
-    # Fetch plan details to get limit
-    plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
-    plan = plan_result.scalar_one_or_none()
-    
-    if plan and tasks_completed_today >= plan.daily_tasks_limit:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks).")
 
-    # 3. Process Task Completion
-    # Check if task is in user's plan or assigned to them
+    plan_result = await db.execute(
+        select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)
+    )
+    plan = plan_result.scalar_one_or_none()
+
+    if plan and tasks_completed_today >= plan.daily_tasks_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks)."
+        )
+
+    # 3. Verify task belongs to user's plan
     query = select(models.VideoTask).outerjoin(
-        models.UserVideoTask, 
+        models.UserVideoTask,
         (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
     ).filter(
         models.VideoTask.id == task_completion.video_task_id,
         (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
     )
-    
+
     vt_result = await db.execute(query)
     video_task = vt_result.scalar_one_or_none()
-    
-    if not video_task:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This task is not available for your current plan.")
 
-    # Check if user has already completed this specific task (regardless of daily limit)
+    if not video_task:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This task is not available for your current plan."
+        )
+
+    # 4. Check if already completed
     uvt_result = await db.execute(
         select(models.UserVideoTask).filter(
             models.UserVideoTask.user_id == current_user.id,
@@ -121,10 +150,12 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
     user_video_task = uvt_result.scalar_one_or_none()
 
     if user_video_task and user_video_task.status == "completed":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed by user")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task already completed by user"
+        )
 
     if not user_video_task:
-        # Create a new entry for completed task
         user_video_task = models.UserVideoTask(
             user_id=current_user.id,
             video_task_id=video_task.id,
@@ -133,58 +164,95 @@ async def complete_task(task_completion: UserTaskCompletion, db: AsyncSession = 
         )
         db.add(user_video_task)
     else:
-        # Update existing entry if it was pending/rejected
         user_video_task.status = "completed"
         user_video_task.completed_at = datetime.now(timezone.utc)
 
-    # Update withdrawal wallet balance with task reward
-    if hasattr(current_user, "withdrawal_wallet_balance"):
-        current_balance = getattr(current_user, "withdrawal_wallet_balance", 0.0) or 0.0
-        setattr(current_user, "withdrawal_wallet_balance", current_balance + video_task.reward_amount)
-    
-    # --- Multi-Tier Referral Rebates (Flat-Rate) ---
-    # Tier A: $0.01, Tier B: $0.005, Tier C: $0.0025
-    rebate_config = [("tier_a_task_rebate", 0.01), ("tier_b_task_rebate", 0.005), ("tier_c_task_rebate", 0.0025)]
-    
-    # Fetch referrer from the ReferralRelationship table
-    rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == current_user.id))
+    # ─────────────────────────────────────────────────────────────────────────
+    # Rule 1: Credit task reward to user's withdrawal wallet (cashable earnings)
+    # This is the user's own Task Earnings component of Total Earnings.
+    # ─────────────────────────────────────────────────────────────────────────
+    current_user.withdrawal_wallet_balance = (
+        current_user.withdrawal_wallet_balance or 0.0
+    ) + video_task.reward_amount
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Rule 2: Multi-Tier Task Rebates
+    # Walk up the referral chain and credit flat rebate amounts to each upline.
+    # Tier A (direct referrer): $0.01
+    # Tier B (referrer's referrer): $0.005
+    # Tier C (3rd level up): $0.0025
+    # ─────────────────────────────────────────────────────────────────────────
+    rebate_config = [
+        ("tier_a_task_rebate", 0.01),
+        ("tier_b_task_rebate", 0.005),
+        ("tier_c_task_rebate", 0.0025),
+    ]
+
+    rel_result = await db.execute(
+        select(models.ReferralRelationship).filter(
+            models.ReferralRelationship.user_id == current_user.id
+        )
+    )
     rel = rel_result.scalar_one_or_none()
     current_referrer_id = rel.referrer_id if rel else None
-    
+
     for field_name, flat_amount in rebate_config:
         if not current_referrer_id:
             break
-            
-        referrer_result = await db.execute(select(models.User).filter(models.User.id == current_referrer_id))
+
+        referrer_result = await db.execute(
+            select(models.User).filter(models.User.id == current_referrer_id)
+        )
         referrer = referrer_result.scalar_one_or_none()
-        
+
         if referrer:
-            # 1. Update referrer's withdrawal wallet
-            referrer.withdrawal_wallet_balance = (referrer.withdrawal_wallet_balance or 0.0) + flat_amount
-            
-            # 2. Update referral code stats
-            code_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.user_id == referrer.id).limit(1))
+            # Credit rebate to referrer's withdrawal wallet (cashable earnings)
+            referrer.withdrawal_wallet_balance = (
+                referrer.withdrawal_wallet_balance or 0.0
+            ) + flat_amount
+
+            # Update referral code stats
+            code_result = await db.execute(
+                select(models.ReferralCode)
+                .filter(models.ReferralCode.user_id == referrer.id)
+                .limit(1)
+            )
             ref_code = code_result.scalar_one_or_none()
             if ref_code:
                 current_val = getattr(ref_code, field_name, 0.0) or 0.0
                 setattr(ref_code, field_name, current_val + flat_amount)
-                # Also update legacy total
                 ref_code.task_rebate_amount = (ref_code.task_rebate_amount or 0.0) + flat_amount
-            
-            # Move up the chain using the relationship table
-            next_rel_result = await db.execute(select(models.ReferralRelationship).filter(models.ReferralRelationship.user_id == referrer.id))
+
+            # Move up the chain
+            next_rel_result = await db.execute(
+                select(models.ReferralRelationship).filter(
+                    models.ReferralRelationship.user_id == referrer.id
+                )
+            )
             next_rel = next_rel_result.scalar_one_or_none()
             current_referrer_id = next_rel.referrer_id if next_rel else None
         else:
             break
-    
+
     await db.commit()
     await db.refresh(current_user)
     await db.refresh(user_video_task)
 
-    return {"message": "Task completed successfully, wallet updated, and referral rebates distributed"}
+    return {
+        "message": "Task completed successfully. Earnings credited and referral rebates distributed.",
+        "reward_amount": video_task.reward_amount,
+    }
 
-# --- Existing Endpoints ---
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+# --- Dashboard ---
 
 class DashboardSummary(BaseModel):
     footage_labeled_min: float
@@ -199,30 +267,50 @@ class DashboardSummary(BaseModel):
     recent_activity: List[dict]
     earnings_history: List[dict]
     total_tasks_completed: int
-    total_earnings: float
-    task_earnings: float
-    referral_commission: float
-    task_rebate_commission: float
-    bonus_refunded: float
+    # ── Earnings breakdown (all exclude recharge/deposit amounts) ──
+    total_earnings: float           # Sum of all profit-generating activities
+    task_earnings: float            # User's own completed task rewards
+    referral_commission: float      # Multi-tier invite commissions (first-purchase only)
+    task_rebate_commission: float   # Multi-tier task rebates from downline activity
+    bonus_refunded: float           # Released upgrade refunds (post 3-day lock)
+    pending_refund: float           # Upgrade refunds still within the 3-day lock period
+
 
 class LearningHubContent(BaseModel):
     guidelines: str
     references: str
     training_videos: str
 
+
 @router.get("/dashboard/summary", response_model=DashboardSummary)
 async def get_dashboard_summary(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
+    """
+    Dashboard summary with correct wallet calculation rules:
+
+    Deposit Wallet = Total Funds Recharged − Funds Spent on Plan Purchases/Upgrades
+      → This is simply deposit_wallet_balance (managed by admin deposit approval
+        and plan purchase/upgrade deductions). No earnings are ever added here.
+
+    Total Earnings = Task Earnings
+                   + Multi-Tier Task Rebates
+                   + Multi-Tier Invite Commissions (first-purchase only)
+                   + Released Upgrade Refunds (post 72-hour lock)
+      → Recharge amounts are NEVER included in Total Earnings.
+
+    The 'bonus_refunded' field shows only RELEASED upgrade refunds.
+    The 'pending_refund' field shows upgrade refunds still within the lock period.
+    """
     try:
-        # Calculate earnings
         today = datetime.now(timezone.utc)
         today_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today.weekday())
         month_start = today_start.replace(day=1)
 
-        async def get_earnings_sum(start_date: datetime):
+        # ── Helper: sum task rewards for a given time window ──────────────────
+        async def get_task_earnings_sum(start_date: datetime) -> float:
             query = (
                 select(func.sum(models.VideoTask.reward_amount))
                 .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
@@ -235,11 +323,11 @@ async def get_dashboard_summary(
             result = await db.execute(query)
             return result.scalar() or 0.0
 
-        today_earnings = await get_earnings_sum(today_start)
-        this_week_earnings = await get_earnings_sum(week_start)
-        this_month_earnings = await get_earnings_sum(month_start)
+        today_earnings = await get_task_earnings_sum(today_start)
+        this_week_earnings = await get_task_earnings_sum(week_start)
+        this_month_earnings = await get_task_earnings_sum(month_start)
 
-        # Count certifications
+        # ── Certifications ────────────────────────────────────────────────────
         try:
             cert_result = await db.execute(
                 select(func.count(models.UserCertification.id)).filter(
@@ -252,7 +340,7 @@ async def get_dashboard_summary(
             print(f"Error counting certifications: {e}")
             completed_certs = 0
 
-        # Calculate total tasks completed
+        # ── Task counts ───────────────────────────────────────────────────────
         total_tasks_completed_result = await db.execute(
             select(func.count(models.UserVideoTask.id))
             .filter(
@@ -261,15 +349,12 @@ async def get_dashboard_summary(
             )
         )
         total_tasks_completed = total_tasks_completed_result.scalar() or 0
-
-        # Calculate footage labeled in minutes (1 task = 0.3 seconds)
         footage_labeled_min = round((total_tasks_completed * 0.3) / 60, 2)
-        
-        # Count active (available) tasks within user's plan scope
+
         user_scoped_tasks = []
         try:
             query = select(models.VideoTask).outerjoin(
-                models.UserVideoTask, 
+                models.UserVideoTask,
                 (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
             ).filter(
                 (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
@@ -278,26 +363,21 @@ async def get_dashboard_summary(
             user_scoped_tasks = all_tasks_result.scalars().all() or []
         except Exception as e:
             print(f"Error fetching tasks: {e}")
-            user_scoped_tasks = []
-        
-        # Get user tasks
+
         user_tasks = {}
         try:
             uvt_result = await db.execute(
-                select(models.UserVideoTask).filter(
-                    models.UserVideoTask.user_id == current_user.id
-                )
+                select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
             )
             user_tasks = {uvt.video_task_id: uvt.status for uvt in (uvt_result.scalars().all() or [])}
         except Exception as e:
             print(f"Error fetching user tasks: {e}")
-            user_tasks = {}
-        
-        completed_tasks_count = sum(1 for status in user_tasks.values() if status == "completed")
-        active_tasks_count = max(0, len(user_scoped_tasks) - completed_tasks_count)
-        pending_videos_count = sum(1 for status in user_tasks.values() if status == "pending")
 
-        # Get recent activity
+        completed_tasks_count = sum(1 for s in user_tasks.values() if s == "completed")
+        active_tasks_count = max(0, len(user_scoped_tasks) - completed_tasks_count)
+        pending_videos_count = sum(1 for s in user_tasks.values() if s == "pending")
+
+        # ── Recent activity ───────────────────────────────────────────────────
         recent_activity = []
         try:
             recent_uvt_result = await db.execute(
@@ -307,7 +387,6 @@ async def get_dashboard_summary(
                 .order_by(models.UserVideoTask.completed_at.desc())
                 .limit(5)
             )
-            
             for uvt, vt in recent_uvt_result.all():
                 try:
                     recent_activity.append({
@@ -318,16 +397,15 @@ async def get_dashboard_summary(
                     })
                 except Exception as e:
                     print(f"Error processing activity: {e}")
-                    continue
         except Exception as e:
             print(f"Error fetching recent activity: {e}")
-            recent_activity = []
-        
-        # Calculate total earnings breakdown
-        # Total Earnings = [Task Earnings] + [Referral Commission] + [Task Rebate Commission] + [Bonus Refunded Upon Upgrade]
-        
-        # 1. Task Earnings (Sum of all completed video tasks)
-        task_earnings_query = (
+
+        # ── Earnings breakdown ────────────────────────────────────────────────
+        # Rule: Total Earnings MUST exclude recharge/deposit amounts.
+        # It is the sum of profit-generating activities only.
+
+        # 1. Task Earnings: sum of all completed video task rewards
+        task_earnings_res = await db.execute(
             select(func.sum(models.VideoTask.reward_amount))
             .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
             .filter(
@@ -335,32 +413,51 @@ async def get_dashboard_summary(
                 models.UserVideoTask.status == "completed"
             )
         )
-        task_earnings_res = await db.execute(task_earnings_query)
         task_earnings = task_earnings_res.scalar() or 0.0
-        
-        # 2. Referral Commission & Task Rebate Commission
-        ref_code_query = select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+
+        # 2. Multi-Tier Invite Commissions (from referral code records)
+        ref_code_query = select(models.ReferralCode).filter(
+            models.ReferralCode.user_id == current_user.id
+        )
         ref_codes_res = await db.execute(ref_code_query)
         ref_codes = ref_codes_res.scalars().all()
         referral_commission = sum(getattr(c, "earned_amount", 0.0) or 0.0 for c in ref_codes)
+
+        # 3. Multi-Tier Task Rebates (from downline task completions)
         task_rebate_commission = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in ref_codes)
-        
-        # 3. Bonus Refunded Upon Upgrade
-        bonus_refunded = current_user.performance_bonus_balance or 0.0
-        
+
+        # 4. Released Upgrade Refunds (post 72-hour lock — these are now cashable)
+        #    Only 'released' records count toward Total Earnings.
+        #    'pending' records are locked and must NOT be included.
+        released_refunds_res = await db.execute(
+            select(func.sum(models.UpgradeRefund.amount)).filter(
+                models.UpgradeRefund.user_id == current_user.id,
+                models.UpgradeRefund.status == "released"
+            )
+        )
+        bonus_refunded = released_refunds_res.scalar() or 0.0
+
+        # Pending (locked) refunds — informational only, not counted in earnings yet
+        pending_refunds_res = await db.execute(
+            select(func.sum(models.UpgradeRefund.amount)).filter(
+                models.UpgradeRefund.user_id == current_user.id,
+                models.UpgradeRefund.status == "pending"
+            )
+        )
+        pending_refund = pending_refunds_res.scalar() or 0.0
+
+        # Total Earnings = Task Earnings + Rebates + Invite Commissions + Released Refunds
+        # Deposit recharges are NEVER included here.
         total_earnings = task_earnings + referral_commission + task_rebate_commission + bonus_refunded
 
-        # Get earnings history for the last 7 days (including today)
+        # ── Earnings history (last 7 days, task earnings only) ────────────────
         earnings_history = []
         days_map = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        today = datetime.now(timezone.utc)
-        
         for i in range(6, -1, -1):
             target_day = today - timedelta(days=i)
             day_start = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
-            
-            # Sum rewards for tasks completed on that day
+
             query = (
                 select(func.sum(models.VideoTask.reward_amount))
                 .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
@@ -373,7 +470,6 @@ async def get_dashboard_summary(
             )
             earnings_result = await db.execute(query)
             daily_sum = earnings_result.scalar() or 0.0
-            
             earnings_history.append({"day": days_map[day_start.weekday()], "value": float(daily_sum)})
 
         return {
@@ -393,11 +489,11 @@ async def get_dashboard_summary(
             "task_earnings": task_earnings,
             "referral_commission": referral_commission,
             "task_rebate_commission": task_rebate_commission,
-            "bonus_refunded": bonus_refunded
+            "bonus_refunded": bonus_refunded,
+            "pending_refund": pending_refund,
         }
     except Exception as e:
         print(f"Fatal error in dashboard summary: {e}")
-        # Return safe defaults
         return {
             "footage_labeled_min": 0.0,
             "today_earnings": 0.0,
@@ -415,8 +511,10 @@ async def get_dashboard_summary(
             "task_earnings": 0.0,
             "referral_commission": 0.0,
             "task_rebate_commission": 0.0,
-            "bonus_refunded": 0.0
+            "bonus_refunded": 0.0,
+            "pending_refund": 0.0,
         }
+
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])
 async def get_certifications(
@@ -426,14 +524,13 @@ async def get_certifications(
     try:
         result = await db.execute(select(models.Certification))
         all_certs = result.scalars().all()
-        
+
         uc_result = await db.execute(
             select(models.UserCertification).filter(models.UserCertification.user_id == current_user.id)
         )
         user_certs = {uc.certification_id: uc.status for uc in uc_result.scalars().all()}
-        
-        # Fetch a fallback video from video_tasks if needed
-        fallback_video_url = "https://www.youtube.com/embed/dQw4w9WgXcQ" # Default fallback
+
+        fallback_video_url = "https://www.youtube.com/embed/dQw4w9WgXcQ"
         try:
             video_result = await db.execute(select(models.VideoTask).limit(1))
             fallback_video = video_result.scalars().first()
@@ -444,22 +541,21 @@ async def get_certifications(
 
         response = []
         for cert in all_certs:
-            # If user is globally marked as trained, every certification should show as completed
-            status = "completed" if current_user.is_trained else user_certs.get(cert.id, "available")
-            
+            cert_status = "completed" if current_user.is_trained else user_certs.get(cert.id, "available")
             response.append({
-                "id": cert.id, 
-                "name": cert.name, 
+                "id": cert.id,
+                "name": cert.name,
                 "description": cert.description or "",
                 "estimated_time": cert.estimated_time or "5 min",
                 "video_url": (cert.video_url if hasattr(cert, 'video_url') and cert.video_url else fallback_video_url),
-                "status": status
+                "status": cert_status
             })
-        
+
         return response
     except Exception as e:
         print(f"Error in get_certifications: {e}")
         return []
+
 
 @router.post("/training/certifications/{id}/start", response_model=dict)
 async def start_certification(
@@ -467,7 +563,6 @@ async def start_certification(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # If user is already trained, block re-starting any certification
     if current_user.is_trained:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -476,10 +571,10 @@ async def start_certification(
 
     cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
     cert = cert_result.scalar_one_or_none()
-    
+
     if not cert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certification not found")
-    
+
     uc_result = await db.execute(
         select(models.UserCertification).filter(
             models.UserCertification.user_id == current_user.id,
@@ -487,16 +582,15 @@ async def start_certification(
         )
     )
     user_cert = uc_result.scalars().first()
-    
+
     if user_cert:
         if user_cert.status == "completed":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Certification already completed. Please download your certificate."
             )
-        # If in_progress, allow re-entry into the video player
         return {"message": f"Certification already {user_cert.status}"}
-    
+
     new_user_cert = models.UserCertification(
         user_id=current_user.id,
         certification_id=id,
@@ -505,8 +599,9 @@ async def start_certification(
     )
     db.add(new_user_cert)
     await db.commit()
-    
+
     return {"message": "Certification started"}
+
 
 @router.get("/training/learning-hub", response_model=LearningHubContent)
 async def get_learning_hub(current_user: models.User = Depends(get_current_user)):
@@ -516,6 +611,7 @@ async def get_learning_hub(current_user: models.User = Depends(get_current_user)
         "training_videos": "https://example.com/training-video.mp4"
     }
 
+
 @router.post("/training/certifications/{id}/complete", response_model=dict)
 async def complete_certification(
     id: int,
@@ -524,10 +620,10 @@ async def complete_certification(
 ):
     cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
     cert = cert_result.scalar_one_or_none()
-    
+
     if not cert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certification not found")
-    
+
     uc_result = await db.execute(
         select(models.UserCertification).filter(
             models.UserCertification.user_id == current_user.id,
@@ -535,20 +631,19 @@ async def complete_certification(
         )
     )
     user_cert = uc_result.scalar_one_or_none()
-    
+
     if not user_cert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User certification not found")
-    
+
     user_cert.status = "completed"
     user_cert.completed_at = datetime.now(timezone.utc)
-    
-    # Update user's global trained status
     current_user.is_trained = True
-    
+
     await db.commit()
     await db.refresh(current_user)
-    
+
     return {"message": "Certification completed"}
+
 
 @router.get("/training/certificate")
 async def get_certificate(
@@ -557,67 +652,54 @@ async def get_certificate(
 ):
     if not current_user.is_trained:
         raise HTTPException(status_code=400, detail="Training not completed")
-    
-    # Create PDF in memory
+
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
-    
-    # Set margins
     pdf.set_margins(0, 0, 0)
-    
-    # Background Color (Light subtle cream/blue)
+
     pdf.set_fill_color(250, 251, 255)
     pdf.rect(0, 0, 297, 210, 'F')
-    
-    # Decorative Border
-    pdf.set_draw_color(89, 50, 234) # Purple color from UI
+
+    pdf.set_draw_color(89, 50, 234)
     pdf.set_line_width(2)
     pdf.rect(10, 10, 277, 190)
     pdf.set_line_width(0.5)
     pdf.rect(13, 13, 271, 184)
-    
-    # Logo / Brand
+
     pdf.set_font('Arial', 'B', 24)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(0, 30)
     pdf.cell(297, 10, 'AdPulseAI', align='C')
-    
-    # Certificate Title
+
     pdf.set_font('Arial', 'B', 40)
     pdf.set_text_color(89, 50, 234)
     pdf.set_xy(0, 60)
     pdf.cell(297, 20, 'CERTIFICATE OF COMPLETION', align='C')
-    
-    # Subtitle
+
     pdf.set_font('Arial', '', 16)
     pdf.set_text_color(100, 116, 139)
     pdf.set_xy(0, 85)
     pdf.cell(297, 10, 'This is to certify that', align='C')
-    
-    # User Name with safety guards for null values
+
     first = current_user.first_name or ""
     last = current_user.last_name or ""
     user_name = f"{first} {last}".strip() or current_user.email or "AdPulseAI User"
-    
+
     pdf.set_font('Arial', 'B', 32)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(0, 105)
     pdf.cell(297, 15, user_name.upper(), align='C')
-    
-    # Divider line under name
+
     pdf.set_draw_color(226, 232, 240)
     pdf.line(80, 125, 217, 125)
-    
-    # Achievement text
+
     pdf.set_font('Arial', '', 16)
     pdf.set_text_color(71, 85, 105)
     pdf.set_xy(0, 135)
     pdf.multi_cell(297, 8, 'has successfully completed the professional training program for\nVIDEO REVIEWING MASTERY', align='C')
-    
-    # Date and Signature Section
+
     completion_date = datetime.now().strftime("%B %d, %Y")
-    
-    # Date
+
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(60, 170)
@@ -627,8 +709,7 @@ async def get_certificate(
     pdf.set_xy(60, 175)
     pdf.cell(50, 5, 'Date of Achievement', align='C')
     pdf.line(60, 168, 110, 168)
-    
-    # Signature
+
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(187, 170)
@@ -638,11 +719,9 @@ async def get_certificate(
     pdf.set_xy(187, 175)
     pdf.cell(50, 5, 'Authorized Signature', align='C')
     pdf.line(187, 168, 237, 168)
-    
-    # Badge / Seal (Simplified to avoid crashes on older FPDF versions)
+
     try:
         pdf.set_fill_color(89, 50, 234)
-        # Use ellipse instead of circle for better compatibility
         pdf.ellipse(148.5 - 15, 175 - 15, 30, 30, 'F')
         pdf.set_text_color(255, 255, 255)
         pdf.set_font('Arial', 'B', 8)
@@ -653,27 +732,21 @@ async def get_certificate(
     except Exception as e:
         print(f"Drawing seal failed: {e}")
 
-    # Output PDF with robust handling for both FPDF 1.x and 2.x
     try:
-        # FPDF 1.7.2 (common on servers) returns a string via dest='S'
-        # FPDF 2.x returns bytes via output()
         try:
-            # Try 1.x style first as it's common on older server setups
             pdf_output = pdf.output(dest='S')
         except (TypeError, Exception):
-            # Fallback to 2.x style
             pdf_output = pdf.output()
-            
-        # Ensure we return bytes
+
         if isinstance(pdf_output, str):
             pdf_output = pdf_output.encode('latin-1')
         elif isinstance(pdf_output, bytearray):
             pdf_output = bytes(pdf_output)
-            
+
     except Exception as e:
         print(f"PDF output failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate PDF")
-    
+
     safe_last_name = (current_user.last_name or "User").replace(" ", "_")
     return Response(
         content=pdf_output,

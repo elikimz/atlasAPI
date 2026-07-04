@@ -67,6 +67,23 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS network VARCHAR"))
             await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS proof_url VARCHAR"))
             await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS admin_notes VARCHAR"))
+
+            # Users: first-purchase flag
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_purchased_first_package BOOLEAN DEFAULT FALSE"))
+
+            # Upgrade Refunds table (3-day lock mechanism)
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS upgrade_refunds (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    amount FLOAT NOT NULL,
+                    status VARCHAR DEFAULT 'pending',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    release_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    released_at TIMESTAMP WITH TIME ZONE,
+                    plan_history_id INTEGER REFERENCES user_plan_history(id) ON DELETE SET NULL
+                )
+            """))
             
             print("✅ Startup migrations completed successfully.")
         except Exception as e:

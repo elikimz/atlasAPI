@@ -216,6 +216,28 @@ class WithdrawalAccount(Base):
 
     user = relationship("User", back_populates="withdrawal_accounts")
 
+class UpgradeRefund(Base):
+    """
+    Tracks upgrade refund amounts with a 3-day (72-hour) lock mechanism.
+    When a user upgrades their plan, the refund of the previous plan price is
+    logged here as 'pending'. After 72 hours it transitions to 'released',
+    at which point the amount is credited to the withdrawal_wallet_balance
+    and counted in Total Earnings.
+    """
+    __tablename__ = "upgrade_refunds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    amount = Column(Float, nullable=False)
+    status = Column(String, default="pending")  # pending, released
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    release_at = Column(DateTime(timezone=True), nullable=False)  # created_at + 72 hours
+    released_at = Column(DateTime(timezone=True), nullable=True)  # actual release timestamp
+    plan_history_id = Column(Integer, ForeignKey("user_plan_history.id", ondelete="SET NULL"), nullable=True)
+
+    user = relationship("User", backref="upgrade_refunds")
+
+
 class AppConfig(Base):
     __tablename__ = "app_config"
 

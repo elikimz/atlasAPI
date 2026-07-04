@@ -37,3 +37,20 @@ class UserPlanHistory(UserPlanHistoryBase):
 
     class Config:
         from_attributes = True
+
+
+class UpgradeRefundResponse(BaseModel):
+    """
+    Response schema for upgrade refund records.
+    Exposes lock status so the frontend can display pending vs released refunds.
+    """
+    id: int
+    amount: float
+    status: str              # 'pending' (locked) or 'released' (cashable)
+    created_at: Optional[datetime]
+    release_at: Optional[datetime]   # When the 72-hour lock expires
+    released_at: Optional[datetime]  # Actual release timestamp (null if still pending)
+    seconds_until_release: int       # Countdown in seconds (0 if released/due)
+
+    class Config:
+        from_attributes = True
