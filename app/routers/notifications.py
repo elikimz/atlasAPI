@@ -88,21 +88,13 @@ async def delete_notification(
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
 
-    # If it's a global notification (user_id is None), we don't actually delete it from the DB
-    # because that would delete it for everyone. In a full system, we'd have a 
-    # NotificationUserStatus table to track per-user deletion/read status.
-    # For this simplified implementation, we only allow deleting targeted notifications.
-    if notification.user_id is not None and notification.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only delete your own notifications")
-
-    # If it's a global notification, we'll just ignore the delete request for now 
-    # to avoid breaking the experience for others, or return success without deleting.
-    if notification.user_id is None:
-        return {"message": "Global notifications cannot be deleted individually in this version"}
-
-    await db.delete(notification)
-    await db.commit()
-    return {"message": "Notification deleted successfully"}
+    # Allow deletion if it's the user's notification or if it's a global notification and the user is an admin
+    if notification.user_id == current_user.id or (notification.user_id is None and current_user.is_admin):
+        await db.execute(delete(models.Notification).filter(models.Notification.id == notification_id))
+        await db.commit()
+        return {"message": "Notification deleted successfully"}
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this notification")
 
 @router.delete("/notifications/clear-all", response_model=dict)
 async def clear_all_notifications(
