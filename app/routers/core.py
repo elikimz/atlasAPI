@@ -474,7 +474,7 @@ async def get_dashboard_summary(
         earnings_history = []
         days_map = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         for i in range(6, -1, -1):
-            target_day = today - timedelta(days=i)
+            target_day = today_start_gmt - timedelta(days=i)
             day_start = target_day.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
 
