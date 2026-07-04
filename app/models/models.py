@@ -41,8 +41,8 @@ class User(Base):
     upgrade_refunds = relationship("UpgradeRefund", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     earnings_logs = relationship("EarningsLog", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    referral_relationship = relationship("ReferralRelationship", foreign_keys="[ReferralRelationship.user_id]", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
-    referrals_given = relationship("ReferralRelationship", foreign_keys="[ReferralRelationship.referrer_id]", back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
+    referral_relationship = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.user_id", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    referrals_given = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.referrer_id", back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
 
 class OTP(Base):
     __tablename__ = "otps"
