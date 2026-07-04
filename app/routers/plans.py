@@ -296,6 +296,7 @@ async def upgrade_plan(
     if refund_amount > 0:
         # Credit to withdrawal wallet (cashable)
         current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) + refund_amount
+        db.add(current_user) # Ensure user state is saved
         
         # Log to EarningsLog for period tracking
         db.add(models.EarningsLog(

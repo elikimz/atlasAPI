@@ -398,10 +398,37 @@ async def delete_user(
         await db.execute(text("DELETE FROM user_plan_history WHERE user_id = :uid"), {"uid": user_id})
         # 8. Evaluations
         await db.execute(text("DELETE FROM evaluations WHERE user_id = :uid"), {"uid": user_id})
+        # 9. Upgrade Refunds
+        await db.execute(text("DELETE FROM upgrade_refunds WHERE user_id = :uid"), {"uid": user_id})
+        # 10. Earnings Logs
+        await db.execute(text("DELETE FROM earnings_logs WHERE user_id = :uid"), {"uid": user_id})
+        # 11. Notifications
+        await db.execute(text("DELETE FROM notifications WHERE user_id = :uid"), {"uid": user_id})
+        # 12. OTPs
+        await db.execute(text("DELETE FROM otps WHERE email = :email"), {"email": user.email})
+        
+        # 13. Cascading delete for children: find all users referred by this user and delete them too
+        referred_users_query = await db.execute(text("SELECT user_id FROM referral_relationships WHERE referrer_id = :uid"), {"uid": user_id})
+        referred_user_ids = [row[0] for row in referred_users_query.fetchall()]
+        
+        for r_uid in referred_user_ids:
+            # Delete immediate children and their records
+            await db.execute(text("DELETE FROM referral_relationships WHERE user_id = :ruid OR referrer_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM referral_codes WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM payments WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM user_certifications WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM user_video_tasks WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM withdrawal_accounts WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM user_plan_history WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM evaluations WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM upgrade_refunds WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM earnings_logs WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM notifications WHERE user_id = :ruid"), {"ruid": r_uid})
+            await db.execute(text("DELETE FROM users WHERE id = :ruid"), {"ruid": r_uid})
         
         await db.delete(user)
         await db.commit()
-        return {"message": "User and all related records deleted successfully"}
+        return {"message": "User, all related records, and all referred children deleted successfully"}
     except IntegrityError as e:
         await db.rollback()
         raise HTTPException(

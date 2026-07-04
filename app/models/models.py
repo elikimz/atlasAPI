@@ -38,6 +38,11 @@ class User(Base):
     current_plan = relationship("Plan", foreign_keys=[current_plan_id])
     withdrawal_accounts = relationship("WithdrawalAccount", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     plan_history = relationship("UserPlanHistory", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    upgrade_refunds = relationship("UpgradeRefund", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    earnings_logs = relationship("EarningsLog", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    referral_relationship = relationship("ReferralRelationship", foreign_keys=[ReferralRelationship.user_id], back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    referrals_given = relationship("ReferralRelationship", foreign_keys=[ReferralRelationship.referrer_id], back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -115,8 +120,8 @@ class ReferralRelationship(Base):
     referral_code_used = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    user = relationship("User", foreign_keys=[user_id])
-    referrer = relationship("User", foreign_keys=[referrer_id])
+    user = relationship("User", foreign_keys=[user_id], back_populates="referral_relationship")
+    referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals_given")
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -218,11 +223,9 @@ class WithdrawalAccount(Base):
 
 class UpgradeRefund(Base):
     """
-    Tracks upgrade refund amounts with a 3-day (72-hour) lock mechanism.
+    Tracks upgrade refund amounts.
     When a user upgrades their plan, the refund of the previous plan price is
-    logged here as 'pending'. After 72 hours it transitions to 'released',
-    at which point the amount is credited to the withdrawal_wallet_balance
-    and counted in Total Earnings.
+    credited immediately to the withdrawal_wallet_balance.
     """
     __tablename__ = "upgrade_refunds"
 
@@ -235,7 +238,7 @@ class UpgradeRefund(Base):
     released_at = Column(DateTime(timezone=True), nullable=True)  # actual release timestamp
     plan_history_id = Column(Integer, ForeignKey("user_plan_history.id", ondelete="SET NULL"), nullable=True)
 
-    user = relationship("User", backref="upgrade_refunds")
+    user = relationship("User", back_populates="upgrade_refunds")
 
 
 class AppConfig(Base):
@@ -262,7 +265,7 @@ class EarningsLog(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    user = relationship("User", backref="earnings_logs")
+    user = relationship("User", back_populates="earnings_logs")
 
 
 class Notification(Base):
@@ -276,4 +279,4 @@ class Notification(Base):
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    user = relationship("User", backref="notifications")
+    user = relationship("User", back_populates="notifications")
