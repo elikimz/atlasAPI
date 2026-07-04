@@ -212,19 +212,16 @@ async def upgrade_plan(
     """
     Upgrade to a higher-tier plan.
 
-    Deposit Wallet Rule: only the NET additional cost (new_price - old_price) is
-    deducted from deposit_wallet_balance. The old plan price is NOT immediately
-    returned to any wallet.
+    Deposit Wallet Rule: the FULL price of the new plan is deducted from deposit_wallet_balance.
+    The old plan price is refunded after a 3-day lock period.
 
     Upgrade Bonus Refund (3-Day Lock):
     - The old plan's purchase price is logged in upgrade_refunds with status='pending'.
     - release_at is set to exactly 72 hours from now.
-    - The amount is NOT added to withdrawal_wallet_balance or performance_bonus_balance yet.
-    - A background task (or the /plans/release-refunds endpoint) will release it after 72h.
+    - The amount is released to withdrawal_wallet_balance after 72h.
 
     Invite Commission Rule (CRITICAL):
     - Plan upgrades NEVER generate invite commissions for the upline.
-    - Only the initial first-time purchase triggers commissions.
     """
     result = await db.execute(select(models.Plan).filter(models.Plan.id == new_plan_id))
     new_plan = result.scalar_one_or_none()
@@ -270,15 +267,13 @@ async def upgrade_plan(
         else current_user.plan_purchase_price or 0.0
     )
 
-    # Net additional cost: user only pays the difference
-    required_additional = max(new_plan.price - refund_amount, 0.0)
-
-    if current_user.deposit_wallet_balance < required_additional:
+    # RULE: Full price of the new plan is deducted from the deposit wallet
+    if current_user.deposit_wallet_balance < new_plan.price:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Insufficient deposit wallet balance to upgrade. "
-                f"Required additional: ${required_additional:.2f}. "
+                f"Required: ${new_plan.price:.2f}. "
                 f"Your previous plan price (${refund_amount:.2f}) will be refunded "
                 f"to your withdrawal wallet after a 3-day lock period."
             )
@@ -286,10 +281,10 @@ async def upgrade_plan(
 
     now = _utc_now()
 
-    # Deduct only the net additional cost from the deposit wallet
-    current_user.deposit_wallet_balance -= required_additional
+    # Deduct the FULL price of the new plan from the deposit wallet
+    current_user.deposit_wallet_balance -= new_plan.price
 
-    # Mark first-purchase flag (in case they somehow skipped purchase)
+    # Mark first-purchase flag
     if new_plan.price > 0:
         current_user.has_purchased_first_package = True
 
@@ -369,88 +364,40 @@ async def release_pending_refunds(
     current_user: models.User = Depends(get_current_active_user)
 ):
     """
-    Check and release any upgrade refunds that have passed the 72-hour lock period
-    for the currently authenticated user.
-
-    This endpoint is called by the frontend on page load / dashboard refresh so
-    that released refunds are credited promptly without requiring a separate
-    background worker.
+    Check for and release any upgrade refunds that have passed their 72h lock.
+    Released funds are moved to withdrawal_wallet_balance (cashable).
     """
     now = _utc_now()
-
-    result = await db.execute(
-        select(models.UpgradeRefund).filter(
-            models.UpgradeRefund.user_id == current_user.id,
-            models.UpgradeRefund.status == "pending",
-            models.UpgradeRefund.release_at <= now
-        )
+    query = select(models.UpgradeRefund).filter(
+        models.UpgradeRefund.user_id == current_user.id,
+        models.UpgradeRefund.status == "pending",
+        models.UpgradeRefund.release_at <= now
     )
-    due_refunds = result.scalars().all()
+    result = await db.execute(query)
+    pending_refunds = result.scalars().all()
 
-    total_released = 0.0
-    for refund in due_refunds:
+    released_total = 0.0
+    for refund in pending_refunds:
         refund.status = "released"
         refund.released_at = now
-        # Credit to withdrawal wallet (cashable earnings)
-        current_user.withdrawal_wallet_balance = (
-            current_user.withdrawal_wallet_balance or 0.0
-        ) + refund.amount
-        total_released += refund.amount
-
-        # Log to EarningsLog for GMT-based period calculations
+        released_total += refund.amount
+        
+        # Credit to withdrawal wallet (cashable)
+        current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) + refund.amount
+        
+        # Log to EarningsLog for period tracking
         db.add(models.EarningsLog(
             user_id=current_user.id,
             amount=refund.amount,
             type="upgrade_refund",
-            description="Released upgrade refund after 3-day lock"
+            description=f"Released upgrade refund for previous plan"
         ))
 
-    if due_refunds:
+    if released_total > 0:
         db.add(current_user)
         await db.commit()
 
     return {
-        "released_count": len(due_refunds),
-        "total_released": total_released,
-        "message": (
-            f"Released {len(due_refunds)} refund(s) totalling ${total_released:.2f} "
-            "to your withdrawal wallet."
-            if due_refunds
-            else "No pending refunds due for release."
-        )
+        "message": f"Released {len(pending_refunds)} refunds totaling ${released_total:.2f}",
+        "released_amount": released_total
     }
-
-
-@router.get("/upgrade-refunds", response_model=list[dict])
-async def get_upgrade_refunds(
-    db: AsyncSession = Depends(get_async_db),
-    current_user: models.User = Depends(get_current_active_user)
-):
-    """
-    Return all upgrade refund records for the current user so the frontend
-    can display pending (locked) vs released refund statuses.
-    """
-    result = await db.execute(
-        select(models.UpgradeRefund)
-        .filter(models.UpgradeRefund.user_id == current_user.id)
-        .order_by(models.UpgradeRefund.created_at.desc())
-    )
-    refunds = result.scalars().all()
-
-    now = _utc_now()
-    return [
-        {
-            "id": r.id,
-            "amount": r.amount,
-            "status": r.status,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "release_at": r.release_at.isoformat() if r.release_at else None,
-            "released_at": r.released_at.isoformat() if r.released_at else None,
-            # Remaining lock time in seconds (0 if already due/released)
-            "seconds_until_release": max(
-                0,
-                int((r.release_at - now).total_seconds()) if r.release_at and r.status == "pending" else 0
-            ),
-        }
-        for r in refunds
-    ]
