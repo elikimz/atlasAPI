@@ -71,6 +71,54 @@ async def mark_notifications_as_read(
     await db.commit()
     return {"message": "Notifications marked as read."}
 
+@router.delete("/notifications/{notification_id}", response_model=dict)
+async def delete_notification(
+    notification_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete a specific notification for the current user."""
+    # Find the notification
+    notification_query = select(models.Notification).filter(
+        models.Notification.id == notification_id
+    )
+    result = await db.execute(notification_query)
+    notification = result.scalar_one_or_none()
+
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    # If it's a global notification (user_id is None), we don't actually delete it from the DB
+    # because that would delete it for everyone. In a full system, we'd have a 
+    # NotificationUserStatus table to track per-user deletion/read status.
+    # For this simplified implementation, we only allow deleting targeted notifications.
+    if notification.user_id is not None and notification.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own notifications")
+
+    # If it's a global notification, we'll just ignore the delete request for now 
+    # to avoid breaking the experience for others, or return success without deleting.
+    if notification.user_id is None:
+        return {"message": "Global notifications cannot be deleted individually in this version"}
+
+    await db.delete(notification)
+    await db.commit()
+    return {"message": "Notification deleted successfully"}
+
+@router.delete("/notifications/clear-all", response_model=dict)
+async def clear_all_notifications(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """Delete all targeted notifications for the current user."""
+    from sqlalchemy import delete
+    
+    # Delete only targeted notifications belonging to this user
+    query = delete(models.Notification).filter(models.Notification.user_id == current_user.id)
+    await db.execute(query)
+    await db.commit()
+    
+    return {"message": "All personal notifications cleared"}
+
 @router.post("/admin/notifications/send", response_model=NotificationSchema, status_code=status.HTTP_201_CREATED)
 async def send_notification(
     notification_data: NotificationCreate,
