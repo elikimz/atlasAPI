@@ -113,7 +113,9 @@ async def send_email(to_email: str, subject: str, otp_code: str):
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    # Use the configured expiration time (default to 1 year if not set)
+    expire_minutes = ACCESS_TOKEN_EXPIRE_MINUTES or 525600
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=expire_minutes))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
