@@ -84,6 +84,18 @@ async def run_migrations():
                     plan_history_id INTEGER REFERENCES user_plan_history(id) ON DELETE SET NULL
                 )
             """))
+
+            # Earnings Log table (for GMT-based period calculations)
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS earnings_logs (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    amount FLOAT NOT NULL,
+                    type VARCHAR NOT NULL,
+                    description VARCHAR,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """))
             
             print("✅ Startup migrations completed successfully.")
         except Exception as e:

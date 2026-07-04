@@ -175,6 +175,14 @@ async def complete_task(
         current_user.withdrawal_wallet_balance or 0.0
     ) + video_task.reward_amount
 
+    # Log to EarningsLog for GMT-based period calculations
+    db.add(models.EarningsLog(
+        user_id=current_user.id,
+        amount=video_task.reward_amount,
+        type="task_reward",
+        description=f"Task reward: {video_task.title}"
+    ))
+
     # ─────────────────────────────────────────────────────────────────────────
     # Rule 2: Multi-Tier Task Rebates
     # Walk up the referral chain and credit flat rebate amounts to each upline.
@@ -210,6 +218,14 @@ async def complete_task(
             referrer.withdrawal_wallet_balance = (
                 referrer.withdrawal_wallet_balance or 0.0
             ) + flat_amount
+
+            # Log to EarningsLog for GMT-based period calculations
+            db.add(models.EarningsLog(
+                user_id=referrer.id,
+                amount=flat_amount,
+                type="task_rebate",
+                description=f"Task rebate from downline {current_user.email} (Tier {field_name.split('_')[1].upper()})"
+            ))
 
             # Update referral code stats
             code_result = await db.execute(
@@ -300,32 +316,36 @@ async def get_dashboard_summary(
                    + Released Upgrade Refunds (post 72-hour lock)
       → Recharge amounts are NEVER included in Total Earnings.
 
-    The 'bonus_refunded' field shows only RELEASED upgrade refunds.
-    The 'pending_refund' field shows upgrade refunds still within the lock period.
+    Periodic Metrics (Today, This Week, This Month):
+      - Strictly based on GMT (00:00:00 boundary).
+      - Includes ALL profit-generating events (task_reward, task_rebate,
+        invite_commission, upgrade_refund).
+      - Excludes recharges/deposits.
     """
     try:
-        today = datetime.now(timezone.utc)
-        today_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
-        week_start = today_start - timedelta(days=today.weekday())
-        month_start = today_start.replace(day=1)
+        # Strict GMT boundaries
+        now_gmt = datetime.now(timezone.utc)
+        today_start_gmt = now_gmt.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Week starts Monday 00:00:00 GMT
+        week_start_gmt = today_start_gmt - timedelta(days=now_gmt.weekday())
+        # Month starts 1st 00:00:00 GMT
+        month_start_gmt = today_start_gmt.replace(day=1)
 
-        # ── Helper: sum task rewards for a given time window ──────────────────
-        async def get_task_earnings_sum(start_date: datetime) -> float:
+        # ── Helper: sum all qualifying earnings for a given time window ───────
+        async def get_total_earnings_sum(start_date: datetime) -> float:
             query = (
-                select(func.sum(models.VideoTask.reward_amount))
-                .join(models.UserVideoTask, models.VideoTask.id == models.UserVideoTask.video_task_id)
+                select(func.sum(models.EarningsLog.amount))
                 .filter(
-                    models.UserVideoTask.user_id == current_user.id,
-                    models.UserVideoTask.status == "completed",
-                    models.UserVideoTask.completed_at >= start_date
+                    models.EarningsLog.user_id == current_user.id,
+                    models.EarningsLog.created_at >= start_date
                 )
             )
             result = await db.execute(query)
             return result.scalar() or 0.0
 
-        today_earnings = await get_task_earnings_sum(today_start)
-        this_week_earnings = await get_task_earnings_sum(week_start)
-        this_month_earnings = await get_task_earnings_sum(month_start)
+        today_earnings = await get_total_earnings_sum(today_start_gmt)
+        this_week_earnings = await get_total_earnings_sum(week_start_gmt)
+        this_month_earnings = await get_total_earnings_sum(month_start_gmt)
 
         # ── Certifications ────────────────────────────────────────────────────
         try:

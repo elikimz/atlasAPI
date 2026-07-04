@@ -247,6 +247,24 @@ class AppConfig(Base):
     description = Column(String, nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+class EarningsLog(Base):
+    """
+    Unified log for all profit-generating events (earnings).
+    Used for strict GMT-based period calculations (Today, This Week, This Month).
+    Excluded: direct recharges/deposits.
+    """
+    __tablename__ = "earnings_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    amount = Column(Float, nullable=False)
+    type = Column(String, nullable=False)  # task_reward, task_rebate, invite_commission, upgrade_refund
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="earnings_logs")
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

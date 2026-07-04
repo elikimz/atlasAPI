@@ -141,6 +141,14 @@ async def purchase_plan(
                 # Credit commission to upline's withdrawal wallet (cashable earnings)
                 upline.withdrawal_wallet_balance = (upline.withdrawal_wallet_balance or 0.0) + commission_amount
 
+                # Log to EarningsLog for GMT-based period calculations
+                db.add(models.EarningsLog(
+                    user_id=upline.id,
+                    amount=commission_amount,
+                    type="invite_commission",
+                    description=f"Invite commission from {current_user.email} (Tier {field_name.split('_')[1].upper()})"
+                ))
+
                 # Update upline's referral code stats
                 code_result = await db.execute(
                     select(models.ReferralCode)
@@ -388,6 +396,14 @@ async def release_pending_refunds(
             current_user.withdrawal_wallet_balance or 0.0
         ) + refund.amount
         total_released += refund.amount
+
+        # Log to EarningsLog for GMT-based period calculations
+        db.add(models.EarningsLog(
+            user_id=current_user.id,
+            amount=refund.amount,
+            type="upgrade_refund",
+            description="Released upgrade refund after 3-day lock"
+        ))
 
     if due_refunds:
         db.add(current_user)
