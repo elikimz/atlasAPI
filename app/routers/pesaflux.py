@@ -299,7 +299,7 @@ async def get_payment_status(
         return {
             "reference": payment.reference,
             "status": payment.status,
-            "plan_name": payment.plan.name if payment.plan else "Account Recharge",
+            "plan_name": payment.plan.name if (payment.plan_id and payment.plan) else "Account Recharge",
             "amount_usd": payment.amount_usd,
             "amount_kes": payment.amount,
             "mpesa_receipt": payment.mpesa_receipt,
@@ -326,7 +326,7 @@ async def get_payment_status(
     return {
         "reference": payment.reference,
         "status": payment.status,
-        "plan_name": payment.plan.name if payment.plan else "Account Recharge",
+        "plan_name": payment.plan.name if (payment.plan_id and payment.plan) else "Account Recharge",
         "amount_usd": payment.amount_usd,
         "amount_kes": payment.amount,
         "mpesa_receipt": payment.mpesa_receipt,
@@ -476,9 +476,11 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
         user.deposit_wallet_balance = (user.deposit_wallet_balance or 0.0) + payment.amount_usd
         
         # Log to payments table for history (marked as paid/approved)
+        # Note: 'period' is a required non-null field in the models.Payment table
         db.add(models.Payment(
             user_id=user.id,
             amount=payment.amount_usd,
+            period=_utc_now().strftime("%b %Y"),
             type="deposit",
             payment_method="M-Pesa",
             status="paid",

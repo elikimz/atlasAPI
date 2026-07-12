@@ -205,6 +205,10 @@ class UserPlanHistory(Base):
 
     user = relationship("User", back_populates="plan_history")
     plan = relationship("Plan") # Updated relationship
+    pesaflux_payments = relationship("PesaFluxPayment", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class UpgradeRefund(Base):
 
 class WithdrawalAccount(Base):
     __tablename__ = "withdrawal_accounts"

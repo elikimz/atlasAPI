@@ -7,6 +7,7 @@ The PesaFluxPayment table is separate from the existing `payments` table.
 """
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, func
+from sqlalchemy.orm import relationship
 from app.database.database import Base
 
 
@@ -66,3 +67,7 @@ class PesaFluxPayment(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("app.models.models.User", back_populates="pesaflux_payments")
+    plan = relationship("app.models.models.Plan")
