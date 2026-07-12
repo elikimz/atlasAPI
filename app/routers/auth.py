@@ -97,26 +97,19 @@ async def send_email(to_email: str, subject: str, otp_code: str):
                 server.starttls()
                 server.login(settings.EMAIL_SENDER, settings.EMAIL_APP_PASSWORD)
                 server.send_message(msg)
-            return True
-        except smtplib.SMTPAuthenticationError as e:
-            print(f"ARCH-LOG [SMTP ERROR]: Authentication failed for {settings.EMAIL_SENDER}. SMTP response: {e.smtp_error} ({e.smtp_code}). This means the EMAIL_APP_PASSWORD is invalid or the Gmail account is blocking sign-in.")
-            return False
-        except smtplib.SMTPException as e:
-            print(f"ARCH-LOG [SMTP ERROR]: SMTP error for {settings.EMAIL_SENDER}: {e}")
-            return False
+            return True, None
         except Exception as e:
-            print(f"ARCH-LOG [SMTP ERROR]: Unexpected error: {type(e).__name__}: {e}")
-            return False
+            error_str = str(e)
+            print(f"ARCH-LOG [SMTP ERROR]: {error_str}")
+            return False, error_str
 
     loop = asyncio.get_event_loop()
-    success = await loop.run_in_executor(None, _send)
+    success, error_msg = await loop.run_in_executor(None, _send)
     if not success:
-        print(f"ARCH-LOG [CRITICAL]: Failed to send email to {to_email}")
-        # In production, we might want to still allow the flow to continue for debugging
-        # or provide a very specific error if it's an SMTP issue.
+        print(f"ARCH-LOG [CRITICAL]: Failed to send email to {to_email}: {error_msg}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Email delivery failed. Please check your email address or try again later."
+            detail=f"Email delivery failed: {error_msg}" if error_msg else "Email delivery failed. Please try again later."
         )
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -261,18 +254,18 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
         error_msg = str(e)
         print(f"ARCH-LOG [LOGIN CRASH]: {error_msg}")
         
-        # Check for specific database errors
+        # Determine appropriate status code and detail
         if "UniqueViolationError" in error_msg or "duplicate key" in error_msg:
-            detail = "This email or referral code is already in use."
             status_code = status.HTTP_400_BAD_REQUEST
-        else:
-            detail = f"An unexpected error occurred: {error_msg}"
+            detail = "This email or referral code is already in use."
+        elif "SMTP" in error_msg or "ConnectionRefusedError" in error_msg:
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            detail = "Email delivery service is currently unavailable. Please try again later."
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            detail = "An unexpected error occurred during login. Our team has been notified."
             
-        raise HTTPException(
-            status_code=status_code,
-            detail=detail
-        )
+        raise HTTPException(status_code=status_code, detail=detail)
 
 @router.post("/auth/verify", response_model=Token)
 async def verify_otp(otp_verify: OTPVerify, db: AsyncSession = Depends(get_async_db)):
