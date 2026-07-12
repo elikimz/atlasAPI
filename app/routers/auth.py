@@ -98,8 +98,14 @@ async def send_email(to_email: str, subject: str, otp_code: str):
                 server.login(settings.EMAIL_SENDER, settings.EMAIL_APP_PASSWORD)
                 server.send_message(msg)
             return True
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"ARCH-LOG [SMTP ERROR]: Authentication failed for {settings.EMAIL_SENDER}. SMTP response: {e.smtp_error} ({e.smtp_code}). This means the EMAIL_APP_PASSWORD is invalid or the Gmail account is blocking sign-in.")
+            return False
+        except smtplib.SMTPException as e:
+            print(f"ARCH-LOG [SMTP ERROR]: SMTP error for {settings.EMAIL_SENDER}: {e}")
+            return False
         except Exception as e:
-            print(f"ARCH-LOG [SMTP ERROR]: {e}")
+            print(f"ARCH-LOG [SMTP ERROR]: Unexpected error: {type(e).__name__}: {e}")
             return False
 
     loop = asyncio.get_event_loop()
