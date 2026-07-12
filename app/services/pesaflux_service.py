@@ -35,14 +35,22 @@ async def initiate_stk_push(
         reference: Unique payment reference (our internal reference)
 
     Returns:
-        dict with keys: success (bool), transaction_request_id (str|None), error (str|None)
+        dict with keys:
+            success (bool)
+            transaction_request_id (str|None)
+            error (str|None)
+            error_code (str|None): 'config_missing' | 'provider_error' | 'timeout' | 'network_error'
     """
     if not settings.PESAFLUX_API_KEY or not settings.PESAFLUX_EMAIL:
-        logger.error("PesaFlux credentials not configured in environment variables.")
+        logger.error(
+            "PesaFlux credentials not configured. "
+            "Set PESAFLUX_API_KEY and PESAFLUX_EMAIL in Azure App Service environment variables."
+        )
         return {
             "success": False,
             "transaction_request_id": None,
-            "error": "Payment provider not configured. Please contact support."
+            "error": "M-Pesa payment is temporarily unavailable. Please try again later or use Crypto (USDT) to recharge.",
+            "error_code": "config_missing"
         }
 
     payload = {
@@ -61,24 +69,82 @@ async def initiate_stk_push(
                 headers={"Content-Type": "application/json"}
             )
 
-        data = response.json()
         logger.info(
-            "PesaFlux STK initiation response for reference=%s: status=%s",
-            reference, data.get("success")
+            "PesaFlux STK raw response for reference=%s: status_code=%s body=%s",
+            reference, response.status_code, response.text[:500]
+        )
+
+        # Handle non-200 HTTP responses from PesaFlux
+        if response.status_code >= 500:
+            logger.error(
+                "PesaFlux API server error for reference=%s: status_code=%s",
+                reference, response.status_code
+            )
+            return {
+                "success": False,
+                "transaction_request_id": None,
+                "error": "M-Pesa payment provider is temporarily unavailable. Please try again in a few minutes.",
+                "error_code": "provider_error"
+            }
+
+        if response.status_code == 401 or response.status_code == 403:
+            logger.error(
+                "PesaFlux API authentication failed for reference=%s: status_code=%s",
+                reference, response.status_code
+            )
+            return {
+                "success": False,
+                "transaction_request_id": None,
+                "error": "M-Pesa payment authentication failed. Please contact support.",
+                "error_code": "auth_error"
+            }
+
+        try:
+            data = response.json()
+        except Exception:
+            logger.error(
+                "PesaFlux API returned non-JSON response for reference=%s: %s",
+                reference, response.text[:200]
+            )
+            return {
+                "success": False,
+                "transaction_request_id": None,
+                "error": "Unexpected response from M-Pesa provider. Please try again.",
+                "error_code": "provider_error"
+            }
+
+        logger.info(
+            "PesaFlux STK initiation response for reference=%s: success=%s txn_id=%s",
+            reference, data.get("success"), data.get("transaction_request_id")
         )
 
         # PesaFlux returns {"success": "200", "massage": "...", "transaction_request_id": "..."}
+        # Note: PesaFlux uses "massage" (typo) instead of "message"
         if str(data.get("success")) == "200" and data.get("transaction_request_id"):
             return {
                 "success": True,
                 "transaction_request_id": data["transaction_request_id"],
-                "error": None
+                "error": None,
+                "error_code": None
             }
         else:
+            # Extract error message from PesaFlux response (handles their typo "massage")
+            provider_error = (
+                data.get("massage")
+                or data.get("message")
+                or data.get("error")
+                or data.get("description")
+                or "STK Push initiation failed."
+            )
+            logger.warning(
+                "PesaFlux STK initiation failed for reference=%s: %s | full_response=%s",
+                reference, provider_error, data
+            )
             return {
                 "success": False,
                 "transaction_request_id": None,
-                "error": data.get("massage") or data.get("message") or "STK Push initiation failed."
+                "error": f"M-Pesa payment failed: {provider_error}. Please check your phone number and try again.",
+                "error_code": "provider_error"
             }
 
     except httpx.TimeoutException:
@@ -86,14 +152,24 @@ async def initiate_stk_push(
         return {
             "success": False,
             "transaction_request_id": None,
-            "error": "Payment provider timed out. Please try again."
+            "error": "M-Pesa payment request timed out. Please check your connection and try again.",
+            "error_code": "timeout"
         }
-    except Exception as exc:
-        logger.error("PesaFlux STK Push error for reference=%s: %s", reference, str(exc))
+    except httpx.ConnectError as exc:
+        logger.error("PesaFlux STK Push connection error for reference=%s: %s", reference, str(exc))
         return {
             "success": False,
             "transaction_request_id": None,
-            "error": "Payment provider error. Please try again."
+            "error": "Unable to connect to M-Pesa payment provider. Please try again later.",
+            "error_code": "network_error"
+        }
+    except Exception as exc:
+        logger.error("PesaFlux STK Push unexpected error for reference=%s: %s", reference, str(exc), exc_info=True)
+        return {
+            "success": False,
+            "transaction_request_id": None,
+            "error": "An unexpected error occurred while initiating M-Pesa payment. Please try again.",
+            "error_code": "unknown_error"
         }
 
 
@@ -139,7 +215,28 @@ async def check_transaction_status(transaction_request_id: str) -> dict:
                 headers={"Content-Type": "application/json"}
             )
 
-        data = response.json()
+        logger.info(
+            "PesaFlux status check raw response for txn_id=%s: status_code=%s body=%s",
+            transaction_request_id, response.status_code, response.text[:300]
+        )
+
+        try:
+            data = response.json()
+        except Exception:
+            logger.error(
+                "PesaFlux status check returned non-JSON for txn_id=%s: %s",
+                transaction_request_id, response.text[:200]
+            )
+            return {
+                "success": False,
+                "status": "Unknown",
+                "receipt": None,
+                "amount": None,
+                "phone": None,
+                "reference": None,
+                "error": "Unexpected response from payment provider."
+            }
+
         logger.info(
             "PesaFlux status check for txn_id=%s: status=%s",
             transaction_request_id, data.get("TransactionStatus")
@@ -168,8 +265,19 @@ async def check_transaction_status(transaction_request_id: str) -> dict:
             "reference": None,
             "error": "Status check timed out."
         }
+    except httpx.ConnectError as exc:
+        logger.error("PesaFlux status check connection error for txn_id=%s: %s", transaction_request_id, str(exc))
+        return {
+            "success": False,
+            "status": "Unknown",
+            "receipt": None,
+            "amount": None,
+            "phone": None,
+            "reference": None,
+            "error": "Unable to connect to payment provider."
+        }
     except Exception as exc:
-        logger.error("PesaFlux status check error for txn_id=%s: %s", transaction_request_id, str(exc))
+        logger.error("PesaFlux status check unexpected error for txn_id=%s: %s", transaction_request_id, str(exc), exc_info=True)
         return {
             "success": False,
             "status": "Unknown",

@@ -221,9 +221,25 @@ async def initiate_stk_push(
         # Mark payment as failed
         pf_payment.status = "failed"
         await db.commit()
+
+        error_code = stk_result.get("error_code", "unknown_error")
+        error_detail = stk_result.get("error") or "Failed to initiate M-Pesa payment. Please try again."
+
+        # Use 503 for provider/config unavailability, 400 for user-fixable errors
+        if error_code in ("config_missing", "provider_error", "network_error", "timeout"):
+            http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+        elif error_code == "auth_error":
+            http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+        else:
+            http_status = status.HTTP_400_BAD_REQUEST
+
+        logger.error(
+            "PesaFlux STK Push failed: user_id=%s plan_id=%s reference=%s error_code=%s error=%s",
+            current_user.id, plan.id, reference, error_code, error_detail
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=stk_result["error"] or "Failed to initiate M-Pesa payment. Please try again."
+            status_code=http_status,
+            detail=error_detail
         )
 
     # 8. Store transaction_request_id
