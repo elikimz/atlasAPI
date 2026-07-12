@@ -26,5 +26,12 @@ class Settings:
 
     if "*" in BACKEND_CORS_ORIGINS:
         BACKEND_CORS_ORIGINS = ["*"]
-    
+
+    # ── PesaFlux M-Pesa STK Push (NEW — additive only) ──────────────────────
+    # These credentials are BACKEND-ONLY. Never expose to frontend.
+    PESAFLUX_API_KEY: str = os.getenv("PESAFLUX_API_KEY", "")
+    PESAFLUX_EMAIL: str = os.getenv("PESAFLUX_EMAIL", "")
+    # Conversion rate: 1 USD = N KES. Override in production env as needed.
+    PESAFLUX_USD_TO_KES_RATE: float = float(os.getenv("PESAFLUX_USD_TO_KES_RATE", "130"))
+
 settings = Settings()

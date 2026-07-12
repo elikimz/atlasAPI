@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from sqlalchemy import select, text
 from app.routers import auth, core, extra, admin, plans, notifications
+from app.routers import pesaflux  # NEW: PesaFlux M-Pesa STK Push (additive)
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database.database import engine, Base, AsyncSessionLocal
@@ -22,6 +23,7 @@ app.include_router(extra.router)
 app.include_router(admin.router)
 app.include_router(plans.router)
 app.include_router(notifications.router)
+app.include_router(pesaflux.router)  # NEW: PesaFlux M-Pesa STK Push (additive)
 
 async def run_migrations():
     """Run lightweight migrations to ensure columns exist."""
@@ -61,6 +63,37 @@ async def run_migrations():
             await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR"))
             await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
             
+            # ── PesaFlux payments table (NEW — additive only) ──────────────────
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pesaflux_payments (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+                    reference VARCHAR NOT NULL UNIQUE,
+                    transaction_request_id VARCHAR,
+                    provider_transaction_id VARCHAR,
+                    mpesa_receipt VARCHAR,
+                    phone VARCHAR NOT NULL,
+                    amount FLOAT NOT NULL,
+                    amount_usd FLOAT NOT NULL DEFAULT 0.0,
+                    status VARCHAR NOT NULL DEFAULT 'pending',
+                    provider VARCHAR NOT NULL DEFAULT 'pesaflux',
+                    plan_activated VARCHAR NOT NULL DEFAULT 'no',
+                    payment_type VARCHAR NOT NULL DEFAULT 'purchase',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE,
+                    completed_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+            # Ensure indexes exist for pesaflux_payments
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_reference ON pesaflux_payments(reference)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_user_id ON pesaflux_payments(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_status ON pesaflux_payments(status)"))
+            # Backfill amount_usd column if table existed before this migration
+            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS amount_usd FLOAT NOT NULL DEFAULT 0.0"))
+            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS plan_activated VARCHAR NOT NULL DEFAULT 'no'"))
+            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS payment_type VARCHAR NOT NULL DEFAULT 'purchase'"))
+
             # Payments table migrations
             await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'payout'"))
             await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method VARCHAR"))
