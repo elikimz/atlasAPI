@@ -1,21 +1,3 @@
-/**
- * PesaFlux M-Pesa STK Push router.
- *
- * This is a NEW, ISOLATED router.
- * It does NOT modify any existing routes or business logic.
- *
- * Endpoints:
- *     POST /pesaflux/initiate        - Authenticated. Initiates STK Push for a plan.
- *     GET  /pesaflux/status/{ref}    - Authenticated. Polls payment status by reference.
- *     POST /pesaflux/webhook         - Public. Receives PesaFlux payment callbacks.
- *
- * Security:
- *     - PESAFLUX_API_KEY is NEVER exposed to the frontend or returned in any response.
- *     - All user-facing endpoints require JWT authentication.
- *     - Webhook is idempotent: duplicate callbacks are safely ignored.
- *     - Plan price is always loaded from the database — never trusted from the frontend.
- */
-
 import uuid
 import logging
 import re
