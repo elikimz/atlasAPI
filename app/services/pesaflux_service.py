@@ -173,38 +173,27 @@ async def initiate_stk_push(
         }
 
 
-async def check_transaction_status(transaction_request_id: str) -> dict:
+async def get_payment_status(reference: str) -> dict:
     """
-    Check the status of a PesaFlux transaction.
+    Check the status of a PesaFlux transaction by its reference.
 
     Args:
-        transaction_request_id: The transaction_request_id returned by initiate_stk_push
+        reference: The unique payment reference
 
     Returns:
         dict with keys:
             success (bool)
-            status (str): "Completed" | "Failed" | "Pending" | "Unknown"
-            receipt (str|None): M-Pesa receipt number
-            amount (str|None): Amount transacted
-            phone (str|None): Phone number
-            reference (str|None): Transaction reference
+            status (str): "completed" | "failed" | "pending"
+            mpesa_receipt (str|None)
             error (str|None)
     """
     if not settings.PESAFLUX_API_KEY or not settings.PESAFLUX_EMAIL:
-        return {
-            "success": False,
-            "status": "Unknown",
-            "receipt": None,
-            "amount": None,
-            "phone": None,
-            "reference": None,
-            "error": "Payment provider not configured."
-        }
+        return {"success": False, "status": "pending", "error": "Config missing"}
 
     payload = {
         "api_key": settings.PESAFLUX_API_KEY,
         "email": settings.PESAFLUX_EMAIL,
-        "transaction_request_id": transaction_request_id
+        "reference": reference
     }
 
     try:
@@ -215,75 +204,27 @@ async def check_transaction_status(transaction_request_id: str) -> dict:
                 headers={"Content-Type": "application/json"}
             )
 
-        logger.info(
-            "PesaFlux status check raw response for txn_id=%s: status_code=%s body=%s",
-            transaction_request_id, response.status_code, response.text[:300]
-        )
+        if response.status_code != 200:
+            return {"success": False, "status": "pending", "error": "Provider HTTP error"}
 
-        try:
-            data = response.json()
-        except Exception:
-            logger.error(
-                "PesaFlux status check returned non-JSON for txn_id=%s: %s",
-                transaction_request_id, response.text[:200]
-            )
-            return {
-                "success": False,
-                "status": "Unknown",
-                "receipt": None,
-                "amount": None,
-                "phone": None,
-                "reference": None,
-                "error": "Unexpected response from payment provider."
-            }
-
-        logger.info(
-            "PesaFlux status check for txn_id=%s: status=%s",
-            transaction_request_id, data.get("TransactionStatus")
-        )
+        data = response.json()
+        
+        # PesaFlux returns "Completed", "Failed", "Pending"
+        raw_status = data.get("TransactionStatus", "Pending").lower()
+        
+        # Map to our internal status
+        final_status = "pending"
+        if raw_status == "completed":
+            final_status = "completed"
+        elif raw_status == "failed":
+            final_status = "failed"
 
         return {
             "success": True,
-            "status": data.get("TransactionStatus", "Unknown"),
-            "receipt": data.get("TransactionReceipt"),
-            "amount": data.get("TransactionAmount"),
-            "phone": data.get("Msisdn"),
-            "reference": data.get("TransactionReference"),
-            "result_code": data.get("TransactionCode"),
-            "result_desc": data.get("ResultDesc"),
+            "status": final_status,
+            "mpesa_receipt": data.get("TransactionReceipt"),
             "error": None
         }
-
-    except httpx.TimeoutException:
-        logger.error("PesaFlux status check timed out for txn_id=%s", transaction_request_id)
-        return {
-            "success": False,
-            "status": "Unknown",
-            "receipt": None,
-            "amount": None,
-            "phone": None,
-            "reference": None,
-            "error": "Status check timed out."
-        }
-    except httpx.ConnectError as exc:
-        logger.error("PesaFlux status check connection error for txn_id=%s: %s", transaction_request_id, str(exc))
-        return {
-            "success": False,
-            "status": "Unknown",
-            "receipt": None,
-            "amount": None,
-            "phone": None,
-            "reference": None,
-            "error": "Unable to connect to payment provider."
-        }
-    except Exception as exc:
-        logger.error("PesaFlux status check unexpected error for txn_id=%s: %s", transaction_request_id, str(exc), exc_info=True)
-        return {
-            "success": False,
-            "status": "Unknown",
-            "receipt": None,
-            "amount": None,
-            "phone": None,
-            "reference": None,
-            "error": "Status check failed."
-        }
+    except Exception as e:
+        logger.error(f"PesaFlux status check error: {e}")
+        return {"success": False, "status": "pending", "error": str(e)}
