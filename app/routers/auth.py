@@ -112,9 +112,11 @@ async def send_email(to_email: str, subject: str, otp_code: str):
     success = await loop.run_in_executor(None, _send)
     if not success:
         print(f"ARCH-LOG [CRITICAL]: Failed to send email to {to_email}")
+        # In production, we might want to still allow the flow to continue for debugging
+        # or provide a very specific error if it's an SMTP issue.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to send verification email. Please try again in a few minutes."
+            detail="Email delivery failed. Please check your email address or try again later."
         )
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -256,10 +258,20 @@ async def login_otp(request: Request, otp_request: OTPRequest, db: AsyncSession 
         raise he
     except Exception as e:
         await db.rollback()
-        print(f"ARCH-LOG [LOGIN CRASH]: {e}")
+        error_msg = str(e)
+        print(f"ARCH-LOG [LOGIN CRASH]: {error_msg}")
+        
+        # Check for specific database errors
+        if "UniqueViolationError" in error_msg or "duplicate key" in error_msg:
+            detail = "This email or referral code is already in use."
+            status_code = status.HTTP_400_BAD_REQUEST
+        else:
+            detail = f"An unexpected error occurred: {error_msg}"
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred. Our team has been notified."
+            status_code=status_code,
+            detail=detail
         )
 
 @router.post("/auth/verify", response_model=Token)
