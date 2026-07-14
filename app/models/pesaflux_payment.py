@@ -71,3 +71,4 @@ class PesaFluxPayment(Base):
     # Relationships
     user = relationship("app.models.models.User", back_populates="pesaflux_payments")
     plan = relationship("app.models.models.Plan")
+    user_plan_history = relationship("app.models.models.UserPlanHistory", back_populates="pesaflux_payment", uselist=False)

@@ -46,6 +46,7 @@ class User(Base):
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     referral_relationship = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.user_id", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     referrals_given = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.referrer_id", back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
+    pesaflux_payments = relationship("PesaFluxPayment", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
 class OTP(Base):
     __tablename__ = "otps"
@@ -205,10 +206,11 @@ class UserPlanHistory(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(String, default="active") # active, expired, upgraded (New status)
     refunded_amount = Column(Float, default=0.0) # New field
+    pesaflux_payment_id = Column(Integer, ForeignKey("pesaflux_payments.id", ondelete="SET NULL"), nullable=True) # New foreign key
 
     user = relationship("User", back_populates="plan_history")
     plan = relationship("Plan") # Updated relationship
-    pesaflux_payments = relationship("PesaFluxPayment", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    pesaflux_payment = relationship("PesaFluxPayment", back_populates="user_plan_history", foreign_keys=[pesaflux_payment_id]) # New relationship with explicit foreign_keys
 
 
 class WithdrawalAccount(Base):

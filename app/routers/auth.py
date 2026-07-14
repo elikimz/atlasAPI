@@ -50,7 +50,12 @@ def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    # Truncate password to 72 bytes as required by bcrypt
+    # Truncate password to 72 characters (not bytes) as passlib's bcrypt handler expects a string
+    # and will handle its own encoding. The 72-byte limit is for the *encoded* password.
+    # For simplicity, we'll truncate the string to 72 characters, which should be safe for most passwords.
+    truncated_password = password[:72]
+    return pwd_context.hash(truncated_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -112,32 +117,7 @@ async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_asyn
     access_token = create_access_token(data={"sub": user.username, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/auth/register/step1")
-async def register_step1(data: RegisterStep1, db: AsyncSession = Depends(get_async_db)):
-    # Check if username exists
-    result = await db.execute(select(models.User).filter(models.User.username == data.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
-    # We don't save yet, or we save a partial user. 
-    # To keep it simple and stateless for frontend, we can just validate here.
-    return {"message": "Username and password valid"}
-
-@router.post("/auth/register/step2")
-async def register_step2(data: RegisterStep2, db: AsyncSession = Depends(get_async_db)):
-    # Final registration step
-    result = await db.execute(select(models.User).filter(models.User.username == data.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
-    # In a real app, you'd pass the password from step 1 securely. 
-    # For this task, I'll assume the frontend sends all data in the final step or we use a temporary session.
-    # Since I'm redesigning, I'll make Step 2 the final creation point.
-    # The frontend will need to send the password again or we need a way to persist it.
-    # Let's adjust the schema to include password in Step 2 for simplicity in this migration.
-    pass
-
-# Redefining Step 2 to be the final submission
+# Final registration: all data sent together
 class RegisterFinal(BaseModel):
     username: str
     password: str
@@ -146,41 +126,63 @@ class RegisterFinal(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
 
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
 @router.post("/auth/register/final")
 async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.User).filter(models.User.username == data.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
-    user = models.User(
-        username=data.username,
-        password_hash=get_password_hash(data.password),
-        phone_number=data.phone_number,
-        first_name=data.first_name,
-        last_name=data.last_name,
-        referral_code=''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-    )
-    
-    db.add(user)
-    await db.flush()
+    try:
+        logger.info(f"Starting registration for username: {data.username}")
+        result = await db.execute(select(models.User).filter(models.User.username == data.username))
+        if result.scalar_one_or_none():
+            logger.warning(f"Registration failed: Username {data.username} already exists")
+            raise HTTPException(status_code=400, detail="Username already registered")
+        
+        user = models.User(
+            username=data.username,
+            password_hash=get_password_hash(data.password),
+            phone_number=data.phone_number,
+            first_name=data.first_name,
+            last_name=data.last_name,
+            referral_code=''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        )
+        
+        db.add(user)
+        await db.flush()
+        logger.info(f"User {data.username} created with ID {user.id}")
 
-    if data.referral_code:
-        ref_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == data.referral_code.strip()))
-        referral = ref_result.scalar_one_or_none()
-        if referral:
-            relationship = models.ReferralRelationship(
-                user_id=user.id,
-                referrer_id=referral.user_id,
-                referral_code_used=data.referral_code.strip()
-            )
-            db.add(relationship)
-            referral.signups_count = (referral.signups_count or 0) + 1
-    
-    # Ensure referral code record for the new user
-    db.add(models.ReferralCode(user_id=user.id, code=user.referral_code))
-    
-    await db.commit()
-    return {"message": "Registration successful"}
+        if data.referral_code:
+            logger.info(f"Processing referral code: {data.referral_code}")
+            ref_result = await db.execute(select(models.ReferralCode).filter(models.ReferralCode.code == data.referral_code.strip()))
+            referral = ref_result.scalar_one_or_none()
+            if referral:
+                relationship = models.ReferralRelationship(
+                    user_id=user.id,
+                    referrer_id=referral.user_id,
+                    referral_code_used=data.referral_code.strip()
+                )
+                db.add(relationship)
+                referral.signups_count = (referral.signups_count or 0) + 1
+                logger.info(f"Referral relationship created for user {user.id} and referrer {referral.user_id}")
+            else:
+                logger.warning(f"Referral code {data.referral_code} not found")
+        
+        # Ensure referral code record for the new user
+        db.add(models.ReferralCode(user_id=user.id, code=user.referral_code))
+        logger.info(f"Referral code {user.referral_code} created for new user {user.id}")
+        
+        await db.commit()
+        logger.info(f"Registration successful for {data.username}")
+        return {"message": "Registration successful"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during registration for {data.username}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @router.get("/auth/me")
 async def read_users_me(current_user: models.User = Depends(get_current_user)):

@@ -1,3 +1,5 @@
+import logging
+from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 from sqlalchemy import select, text
 from app.routers import auth, core, extra, admin, plans, notifications
@@ -6,6 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database.database import engine, Base, AsyncSessionLocal
 from app.models import models
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[
+    RotatingFileHandler("uvicorn.log", maxBytes=10*1024*1024, backupCount=5),
+    logging.StreamHandler()
+])
+logger = logging.getLogger("uvicorn")
 
 app = FastAPI()
 
