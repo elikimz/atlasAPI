@@ -70,9 +70,11 @@ class CertificationUpdate(BaseModel):
     is_active: bool | None = None
 
 class UserUpdate(BaseModel):
+    username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     email: str | None = None
+    phone_number: str | None = None
     role: str | None = None
     is_admin: bool | None = None
     is_suspended: bool | None = None
@@ -320,9 +322,11 @@ async def get_all_users(
     return [
         {
             "id": u.id,
+            "username": u.username,
             "first_name": u.first_name,
             "last_name": u.last_name,
             "email": u.email,
+            "phone_number": u.phone_number,
             "role": u.role,
             "is_admin": u.is_admin,
             "is_suspended": u.is_suspended,

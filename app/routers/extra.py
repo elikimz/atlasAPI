@@ -539,9 +539,11 @@ async def request_withdrawal(
 
 # --- Settings ---
 class UserProfile(BaseModel):
+    username: str
     first_name: Optional[str]
     last_name: Optional[str]
-    email: str
+    email: Optional[str]
+    phone_number: Optional[str]
     has_withdrawal_password: bool
 
 class UserProfileUpdate(BaseModel):
@@ -555,9 +557,11 @@ class AppConfigSchema(BaseModel):
 @router.get("/settings/profile", response_model=UserProfile)
 async def get_profile(current_user: models.User = Depends(get_current_user)):
     return {
+        "username": current_user.username,
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
         "email": current_user.email,
+        "phone_number": current_user.phone_number,
         "has_withdrawal_password": bool(current_user.withdrawal_password)
     }
 
