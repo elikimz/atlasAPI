@@ -47,22 +47,17 @@ class Token(BaseModel):
 
 # --- Helpers ---
 def verify_password(plain_password, hashed_password):
-    # Apply the same truncation logic as hashing for consistency
+    # Silently truncate password to 72 bytes for verification consistency
     truncated_plain_password_bytes = plain_password.encode("utf-8")[:72]
     truncated_plain_password = truncated_plain_password_bytes.decode("utf-8", "ignore")
     return pwd_context.verify(truncated_plain_password, hashed_password)
 
 def get_password_hash(password):
-    try:
-        # Encode to bytes, truncate to 72 bytes, then decode back to string
-        # This ensures the byte length is strictly adhered to by bcrypt
-        truncated_password_bytes = password.encode("utf-8")[:72]
-        truncated_password = truncated_password_bytes.decode("utf-8", "ignore")
-        return pwd_context.hash(truncated_password)
-    except ValueError as e:
-        # Log the error and re-raise with a more specific message if truncation fails unexpectedly
-        logger.error(f"Password hashing failed due to length constraint: {e}")
-        raise HTTPException(status_code=400, detail="Password too long. Please use a password shorter than 72 characters.")
+    # Silently truncate password to 72 bytes before hashing
+    # This ensures the byte length is strictly adhered to by bcrypt without raising an error
+    truncated_password_bytes = password.encode("utf-8")[:72]
+    truncated_password = truncated_password_bytes.decode("utf-8", "ignore")
+    return pwd_context.hash(truncated_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
