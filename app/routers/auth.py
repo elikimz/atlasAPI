@@ -47,15 +47,22 @@ class Token(BaseModel):
 
 # --- Helpers ---
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    # Apply the same truncation logic as hashing for consistency
+    truncated_plain_password_bytes = plain_password.encode("utf-8")[:72]
+    truncated_plain_password = truncated_plain_password_bytes.decode("utf-8", "ignore")
+    return pwd_context.verify(truncated_plain_password, hashed_password)
 
 def get_password_hash(password):
-    # Truncate password to 72 bytes as required by bcrypt
-    # Truncate password to 72 characters (not bytes) as passlib's bcrypt handler expects a string
-    # and will handle its own encoding. The 72-byte limit is for the *encoded* password.
-    # For simplicity, we'll truncate the string to 72 characters, which should be safe for most passwords.
-    truncated_password = password[:72]
-    return pwd_context.hash(truncated_password)
+    try:
+        # Encode to bytes, truncate to 72 bytes, then decode back to string
+        # This ensures the byte length is strictly adhered to by bcrypt
+        truncated_password_bytes = password.encode("utf-8")[:72]
+        truncated_password = truncated_password_bytes.decode("utf-8", "ignore")
+        return pwd_context.hash(truncated_password)
+    except ValueError as e:
+        # Log the error and re-raise with a more specific message if truncation fails unexpectedly
+        logger.error(f"Password hashing failed due to length constraint: {e}")
+        raise HTTPException(status_code=400, detail="Password too long. Please use a password shorter than 72 characters.")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()

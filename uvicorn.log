@@ -250,3 +250,7 @@ ValueError: password cannot be longer than 72 bytes, truncate manually if necess
 2026-07-14 10:00:54,225 - app.routers.auth - INFO - User testuser created with ID 35
 2026-07-14 10:00:54,225 - app.routers.auth - INFO - Referral code 1O7HU3D4 created for new user 35
 2026-07-14 10:00:54,247 - app.routers.auth - INFO - Registration successful for testuser
+2026-07-14 10:13:47,303 - app.routers.auth - INFO - Starting registration for username: testuser
+2026-07-14 10:13:47,602 - app.routers.auth - INFO - User testuser created with ID 36
+2026-07-14 10:13:47,602 - app.routers.auth - INFO - Referral code 8MKYBLXE created for new user 36
+2026-07-14 10:13:47,614 - app.routers.auth - INFO - Registration successful for testuser
