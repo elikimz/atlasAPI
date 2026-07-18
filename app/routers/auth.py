@@ -104,11 +104,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/auth/login", response_model=Token)
 async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_async_db)):
-    # Support login by username or email
+    # Support login by username or email (case-insensitive for email)
+    username_lower = login_request.username.lower()
     result = await db.execute(
         select(models.User).filter(
             (models.User.username == login_request.username) |
-            (models.User.email == login_request.username)
+            (func.lower(models.User.email) == username_lower)
         )
     )
     user = result.scalar_one_or_none()
