@@ -37,111 +37,119 @@ app.include_router(pesaflux.router)  # NEW: PesaFlux M-Pesa STK Push (additive)
 async def run_migrations():
     """Run lightweight migrations to ensure columns exist."""
     async with engine.begin() as conn:
-        try:
+        # Define migration tasks
+        migrations = [
             # Users table migrations
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_wallet_balance FLOAT DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_wallet_balance FLOAT DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS performance_bonus_balance FLOAT DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_plan_id INTEGER"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_start_date TIMESTAMP WITH TIME ZONE"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_date TIMESTAMP WITH TIME ZONE"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_purchase_price FLOAT DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trained BOOLEAN DEFAULT FALSE"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'user'"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_password VARCHAR"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE"))
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_wallet_balance FLOAT DEFAULT 0.0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_wallet_balance FLOAT DEFAULT 0.0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS performance_bonus_balance FLOAT DEFAULT 0.0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS current_plan_id INTEGER",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_start_date TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_date TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_purchase_price FLOAT DEFAULT 0.0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_trained BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR DEFAULT 'user'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawal_password VARCHAR",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
             
             # Backfill admin role
-            await conn.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = TRUE"))
+            "UPDATE users SET role = 'admin' WHERE is_admin = TRUE",
             
             # Video tasks table migrations
-            await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
-            await conn.execute(text("ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE"))
+            "ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS reward_amount FLOAT DEFAULT 0.0",
+            "ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS video_url VARCHAR",
+            "ALTER TABLE video_tasks ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE CASCADE",
             
             # Certifications table migrations
-            await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR"))
+            "ALTER TABLE certifications ADD COLUMN IF NOT EXISTS video_url VARCHAR",
             
             # Plans table migrations
-            await conn.execute(text("ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_upgrade_only BOOLEAN DEFAULT FALSE"))
-            await conn.execute(text("ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_upgrade_only BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE plans ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
             
             # OTP table migrations
-            await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS is_used BOOLEAN DEFAULT FALSE"))
-            await conn.execute(text("ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR"))
-            await conn.execute(text("ALTER TABLE certifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+            "ALTER TABLE otps ADD COLUMN IF NOT EXISTS is_used BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE otps ADD COLUMN IF NOT EXISTS ip_address VARCHAR",
+            "ALTER TABLE certifications ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
             
             # ── PesaFlux payments table (NEW — additive only) ──────────────────
-            await conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS pesaflux_payments (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
-                    reference VARCHAR NOT NULL UNIQUE,
-                    transaction_request_id VARCHAR,
-                    provider_transaction_id VARCHAR,
-                    mpesa_receipt VARCHAR,
-                    phone VARCHAR NOT NULL,
-                    amount FLOAT NOT NULL,
-                    amount_usd FLOAT NOT NULL DEFAULT 0.0,
-                    status VARCHAR NOT NULL DEFAULT 'pending',
-                    provider VARCHAR NOT NULL DEFAULT 'pesaflux',
-                    plan_activated VARCHAR NOT NULL DEFAULT 'no',
-                    payment_type VARCHAR NOT NULL DEFAULT 'purchase',
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    updated_at TIMESTAMP WITH TIME ZONE,
-                    completed_at TIMESTAMP WITH TIME ZONE
-                )
-            """))
+            """
+            CREATE TABLE IF NOT EXISTS pesaflux_payments (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+                reference VARCHAR NOT NULL UNIQUE,
+                transaction_request_id VARCHAR,
+                provider_transaction_id VARCHAR,
+                mpesa_receipt VARCHAR,
+                phone VARCHAR NOT NULL,
+                amount FLOAT NOT NULL,
+                amount_usd FLOAT NOT NULL DEFAULT 0.0,
+                status VARCHAR NOT NULL DEFAULT 'pending',
+                provider VARCHAR NOT NULL DEFAULT 'pesaflux',
+                plan_activated VARCHAR NOT NULL DEFAULT 'no',
+                payment_type VARCHAR NOT NULL DEFAULT 'purchase',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE
+            )
+            """,
             # Ensure indexes exist for pesaflux_payments
-            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_reference ON pesaflux_payments(reference)"))
-            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_user_id ON pesaflux_payments(user_id)"))
-            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_status ON pesaflux_payments(status)"))
-            # Backfill amount_usd column if table existed before this migration
-            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS amount_usd FLOAT NOT NULL DEFAULT 0.0"))
-            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS plan_activated VARCHAR NOT NULL DEFAULT 'no'"))
-            await conn.execute(text("ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS payment_type VARCHAR NOT NULL DEFAULT 'purchase'"))
+            "CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_reference ON pesaflux_payments(reference)",
+            "CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_user_id ON pesaflux_payments(user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_pesaflux_payments_status ON pesaflux_payments(status)",
+            # Backfill columns if table existed
+            "ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS amount_usd FLOAT NOT NULL DEFAULT 0.0",
+            "ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS plan_activated VARCHAR NOT NULL DEFAULT 'no'",
+            "ALTER TABLE pesaflux_payments ADD COLUMN IF NOT EXISTS payment_type VARCHAR NOT NULL DEFAULT 'purchase'",
 
             # Payments table migrations
-            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'payout'"))
-            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method VARCHAR"))
-            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS network VARCHAR"))
-            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS proof_url VARCHAR"))
-            await conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS admin_notes VARCHAR"))
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'payout'",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method VARCHAR",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS network VARCHAR",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS proof_url VARCHAR",
+            "ALTER TABLE payments ADD COLUMN IF NOT EXISTS admin_notes VARCHAR",
 
             # Users: first-purchase flag
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_purchased_first_package BOOLEAN DEFAULT FALSE"))
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS has_purchased_first_package BOOLEAN DEFAULT FALSE",
 
             # Upgrade Refunds table (3-day lock mechanism)
-            await conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS upgrade_refunds (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                    amount FLOAT NOT NULL,
-                    status VARCHAR DEFAULT 'pending',
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    release_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    released_at TIMESTAMP WITH TIME ZONE,
-                    plan_history_id INTEGER REFERENCES user_plan_history(id) ON DELETE SET NULL
-                )
-            """))
+            """
+            CREATE TABLE IF NOT EXISTS upgrade_refunds (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                amount FLOAT NOT NULL,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                release_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                released_at TIMESTAMP WITH TIME ZONE,
+                plan_history_id INTEGER REFERENCES user_plan_history(id) ON DELETE SET NULL
+            )
+            """,
 
             # Earnings Log table (for GMT-based period calculations)
-            await conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS earnings_logs (
-                    id SERIAL PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                    amount FLOAT NOT NULL,
-                    type VARCHAR NOT NULL,
-                    description VARCHAR,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            """))
-            
-            print("✅ Startup migrations completed successfully.")
-        except Exception as e:
-            print(f"⚠️ Migration Notice (Safe to ignore if columns exist): {e}")
+            """
+            CREATE TABLE IF NOT EXISTS earnings_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                amount FLOAT NOT NULL,
+                type VARCHAR NOT NULL,
+                description VARCHAR,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+            """
+        ]
+
+        for migration in migrations:
+            try:
+                await conn.execute(text(migration))
+            except Exception as e:
+                # Log only truly unexpected errors, skip common "already exists" errors
+                if "already exists" not in str(e).lower() and "duplicate column" not in str(e).lower():
+                    logger.warning(f"⚠️ Migration Step Notice: {str(e)[:100]}...")
+        
+        print("✅ Startup migrations completed successfully.")
 
 async def seed_data():
     """Seed initial data if tables are empty."""
