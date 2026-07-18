@@ -130,8 +130,8 @@ async def initiate_stk_push(
             reference, data.get("success"), data.get("transaction_request_id")
         )
 
-        # PesaFlux returns {"success": "200", "massage": "...", "transaction_request_id": "..."}
-        # Note: PesaFlux uses "massage" (typo) instead of "message"
+        # ── Handle PesaFlux success response ──
+        # Documented success: {"success": "200", "massage": "...", "transaction_request_id": "..."}
         if str(data.get("success")) == "200" and data.get("transaction_request_id"):
             return {
                 "success": True,
@@ -139,46 +139,71 @@ async def initiate_stk_push(
                 "error": None,
                 "error_code": None
             }
-        else:
-            # Extract error message from PesaFlux response (handles their typo "massage")
-            # PesaFlux documented error response uses ResponseCode and ResponseDescription
-            provider_error = (
-                data.get("ResponseDescription")
-                or data.get("massage")
-                or data.get("message")
-                or data.get("error")
-                or data.get("description")
-                or "STK Push initiation failed."
+
+        # ── Handle PesaFlux error / non-success responses ──
+        # The provider can return errors in several formats. We handle all known ones:
+        #   1. {"ResultCode": "403", "errorMessage": "..."}   (account not verified, etc.)
+        #   2. {"ResponseCode": 1032, "ResponseDescription": "...", "transaction_request_id": "..."}
+        #   3. {"success": "200", "massage": "STK Push initiation failed.", "transaction_request_id": "..."}
+        #   4. {"error": "..."} or {"message": "..."}
+        
+        result_code = data.get("ResultCode")
+        response_code = data.get("ResponseCode")
+        provider_error = (
+            data.get("errorMessage")
+            or data.get("ResponseDescription")
+            or data.get("massage")
+            or data.get("message")
+            or data.get("error")
+            or data.get("description")
+            or "STK Push initiation failed."
+        )
+        
+        # Determine the internal error code
+        error_code = "provider_error"
+        if str(result_code) == "403" or str(response_code) == "403":
+            error_code = "account_not_verified"
+        elif response_code == 1032:
+            error_code = "user_cancelled"
+        elif response_code == 1037:
+            error_code = "subscriber_unreachable"
+        elif response_code == 1:
+            error_code = "insufficient_balance"
+        elif result_code and str(result_code).startswith("4"):
+            error_code = "auth_or_account_error"
+        
+        logger.warning(
+            "PesaFlux STK initiation failed for reference=%s: result_code=%s error=%s | full_response=%s",
+            reference, result_code or response_code, provider_error, data
+        )
+        
+        # Build a user-friendly error message
+        user_msg = f"M-Pesa payment failed: {provider_error}"
+        
+        if str(result_code) == "403" or str(response_code) == "403":
+            user_msg = (
+                "M-Pesa payment is not available. The payment account has not been verified. "
+                "Please contact support to complete account verification."
             )
-            
-            # Map specific PesaFlux error codes to actionable error codes
-            response_code = data.get("ResponseCode")
-            error_code = "provider_error"
-            if response_code == 1032:
-                error_code = "user_cancelled"
-            elif response_code == 1037:
-                error_code = "subscriber_unreachable"
-            elif response_code == 1:
-                error_code = "insufficient_balance"
-            
-            logger.warning(
-                "PesaFlux STK initiation failed for reference=%s: %s | full_response=%s",
-                reference, provider_error, data
-            )
-            
-            # Format a user-friendly error message
-            user_msg = f"M-Pesa payment failed: {provider_error}"
-            if response_code == 1:
-                user_msg = f"M-Pesa payment failed: Insufficient balance. Please check your M-Pesa balance and try again."
-            elif response_code == 1037:
-                user_msg = f"M-Pesa payment failed: Unable to reach subscriber. Please ensure your phone is on and has network coverage."
-            
-            return {
-                "success": False,
-                "transaction_request_id": None,
-                "error": user_msg,
-                "error_code": error_code
-            }
+        elif response_code == 1:
+            user_msg = "M-Pesa payment failed: Insufficient balance. Please check your M-Pesa balance and try again."
+        elif response_code == 1037:
+            user_msg = "M-Pesa payment failed: Unable to reach subscriber. Please ensure your phone is on and has network coverage."
+        elif response_code == 1032:
+            user_msg = "M-Pesa payment was cancelled. Please try again."
+        elif response_code == 1001:
+            user_msg = "M-Pesa payment failed: A previous transaction is still in progress. Please wait a moment and try again."
+        elif response_code == 1019:
+            user_msg = "M-Pesa payment failed: The transaction has expired. Please try again."
+        elif response_code == 2001:
+            user_msg = "M-Pesa payment failed: Invalid payment account information. Please contact support."
+        
+        return {
+            "success": False,
+            "transaction_request_id": None,
+            "error": user_msg,
+            "error_code": error_code
+        }
 
     except httpx.TimeoutException:
         logger.error("PesaFlux STK Push timed out for reference=%s", reference)
