@@ -220,6 +220,13 @@ async def initiate_stk_push(
             
             # Handle errors from pesaflux_service
             error_msg = init_res.get("error") or init_res.get("message") or "Failed to initiate M-Pesa payment. Please try again later."
+            error_code = init_res.get("error_code")
+            
+            logger.error(
+                "PesaFlux STK Push failed for reference=%s: code=%s msg=%s",
+                reference, error_code, error_msg
+            )
+            
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=error_msg

@@ -77,34 +77,46 @@ async def initiate_stk_push(
         # Handle non-200 HTTP responses from PesaFlux
         if response.status_code >= 500:
             logger.error(
-                "PesaFlux API server error for reference=%s: status_code=%s",
-                reference, response.status_code
+                "PesaFlux API server error for reference=%s: status_code=%s body=%s",
+                reference, response.status_code, response.text[:200]
             )
             return {
                 "success": False,
                 "transaction_request_id": None,
-                "error": "M-Pesa payment provider is temporarily unavailable. Please try again in a few minutes.",
+                "error": f"M-Pesa payment provider is temporarily unavailable. (Status {response.status_code}). Please try again in a few minutes.",
                 "error_code": "provider_error"
             }
 
         if response.status_code == 401 or response.status_code == 403:
             logger.error(
-                "PesaFlux API authentication failed for reference=%s: status_code=%s",
-                reference, response.status_code
+                "PesaFlux API authentication failed for reference=%s: status_code=%s body=%s",
+                reference, response.status_code, response.text[:200]
             )
             return {
                 "success": False,
                 "transaction_request_id": None,
-                "error": "M-Pesa payment authentication failed. Please contact support.",
+                "error": f"M-Pesa payment authentication failed. (Status {response.status_code}). Please contact support.",
                 "error_code": "auth_error"
+            }
+            
+        if response.status_code >= 400:
+            logger.error(
+                "PesaFlux API client error for reference=%s: status_code=%s body=%s",
+                reference, response.status_code, response.text[:200]
+            )
+            return {
+                "success": False,
+                "transaction_request_id": None,
+                "error": f"M-Pesa payment failed with provider error. (Status {response.status_code}). Please check your details.",
+                "error_code": "provider_error"
             }
 
         try:
             data = response.json()
-        except Exception:
+        except Exception as e:
             logger.error(
-                "PesaFlux API returned non-JSON response for reference=%s: %s",
-                reference, response.text[:200]
+                "PesaFlux API returned non-JSON response for reference=%s: %s | Error: %s",
+                reference, response.text[:200], str(e)
             )
             return {
                 "success": False,
