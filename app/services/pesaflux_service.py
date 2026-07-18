@@ -129,22 +129,43 @@ async def initiate_stk_push(
             }
         else:
             # Extract error message from PesaFlux response (handles their typo "massage")
+            # PesaFlux documented error response uses ResponseCode and ResponseDescription
             provider_error = (
-                data.get("massage")
+                data.get("ResponseDescription")
+                or data.get("massage")
                 or data.get("message")
                 or data.get("error")
                 or data.get("description")
                 or "STK Push initiation failed."
             )
+            
+            # Map specific PesaFlux error codes to actionable error codes
+            response_code = data.get("ResponseCode")
+            error_code = "provider_error"
+            if response_code == 1032:
+                error_code = "user_cancelled"
+            elif response_code == 1037:
+                error_code = "subscriber_unreachable"
+            elif response_code == 1:
+                error_code = "insufficient_balance"
+            
             logger.warning(
                 "PesaFlux STK initiation failed for reference=%s: %s | full_response=%s",
                 reference, provider_error, data
             )
+            
+            # Format a user-friendly error message
+            user_msg = f"M-Pesa payment failed: {provider_error}"
+            if response_code == 1:
+                user_msg = f"M-Pesa payment failed: Insufficient balance. Please check your M-Pesa balance and try again."
+            elif response_code == 1037:
+                user_msg = f"M-Pesa payment failed: Unable to reach subscriber. Please ensure your phone is on and has network coverage."
+            
             return {
                 "success": False,
                 "transaction_request_id": None,
-                "error": f"M-Pesa payment failed: {provider_error}. Please check your phone number and try again.",
-                "error_code": "provider_error"
+                "error": user_msg,
+                "error_code": error_code
             }
 
     except httpx.TimeoutException:
@@ -210,19 +231,19 @@ async def get_payment_status(reference: str) -> dict:
         data = response.json()
         
         # PesaFlux returns "Completed", "Failed", "Pending"
-        raw_status = data.get("TransactionStatus", "Pending").lower()
+        raw_status = data.get("TransactionStatus", data.get("ResponseDescription", "Pending")).lower()
         
         # Map to our internal status
         final_status = "pending"
-        if raw_status == "completed":
+        if raw_status == "completed" or raw_status == "success":
             final_status = "completed"
-        elif raw_status == "failed":
+        elif raw_status == "failed" or "cancelled" in raw_status:
             final_status = "failed"
 
         return {
             "success": True,
             "status": final_status,
-            "mpesa_receipt": data.get("TransactionReceipt"),
+            "mpesa_receipt": data.get("TransactionReceipt") or data.get("TransactionID"),
             "error": None
         }
     except Exception as e:

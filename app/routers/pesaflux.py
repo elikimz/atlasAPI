@@ -289,7 +289,15 @@ async def get_payment_status(
         }
 
     # Otherwise, check with PesaFlux (sync check)
-    status_res = await pesaflux_service.check_transaction_status(payment.reference)
+    if not payment.transaction_request_id:
+        return {
+            "reference": payment.reference,
+            "status": "pending",
+            "plan_name": None,
+            "amount_usd": payment.amount_usd
+        }
+    
+    status_res = await pesaflux_service.get_payment_status(payment.transaction_request_id)
     
     # If PesaFlux says it's completed, process it
     if status_res["success"] and status_res["status"] == "completed":
