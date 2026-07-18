@@ -209,7 +209,7 @@ async def initiate_stk_push(
         # 7. Call PesaFlux Service to initiate STK Push
         init_res = await pesaflux_service.initiate_stk_push(
             phone=pf_payment.phone,
-            amount=pf_payment.amount,
+            amount_kes=pf_payment.amount,
             reference=pf_payment.reference
         )
 
