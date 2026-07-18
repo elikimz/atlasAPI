@@ -1,260 +1,29 @@
-2026-07-14 09:51:40,184 - uvicorn.error - INFO - Started server process [3093]
-2026-07-14 09:51:40,184 - uvicorn.error - INFO - Waiting for application startup.
-2026-07-14 09:51:40,674 - uvicorn.error - INFO - Application startup complete.
-2026-07-14 09:51:50,965 - uvicorn.error - ERROR - [Errno 98] Address already in use
-2026-07-14 09:52:08,872 - uvicorn.error - INFO - Shutting down
-2026-07-14 09:52:08,973 - uvicorn.error - INFO - Waiting for application shutdown.
-2026-07-14 09:52:08,986 - uvicorn.error - INFO - Application shutdown complete.
-2026-07-14 09:52:08,986 - uvicorn.error - INFO - Finished server process [3093]
-2026-07-14 09:55:36,661 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 09:55:36,670 - app.routers.auth - ERROR - Error during registration for testuser: One or more mappers failed to initialize - can't proceed with initialization of other mappers. Triggering mapper: 'Mapper[PesaFluxPayment(pesaflux_payments)]'. Original exception was: Mapper 'Mapper[User(users)]' has no property 'pesaflux_payments'.  If this property was indicated from other mappers or configure events, ensure registry.configure() has been called.
-2026-07-14 09:55:36,677 - app.routers.auth - ERROR - Traceback (most recent call last):
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 133, in register_final
-    result = await db.execute(select(models.User).filter(models.User.username == data.username))
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/ext/asyncio/session.py", line 448, in execute
-    result = await greenlet_spawn(
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
-    result = context.switch(value)
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/session.py", line 2373, in execute
-    return self._execute_internal(
-           ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/session.py", line 2271, in _execute_internal
-    result: Result[Any] = compile_state_cls.orm_execute_statement(
-                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/context.py", line 306, in orm_execute_statement
-    result = conn.execute(
-             ^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/engine/base.py", line 1421, in execute
-    return meth(
-           ^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
-    return connection._execute_clauseelement(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/engine/base.py", line 1635, in _execute_clauseelement
-    compiled_sql, extracted_params, cache_hit = elem._compile_w_cache(
-                                                ^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/elements.py", line 715, in _compile_w_cache
-    compiled_sql = self._compiler(
-                   ^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/elements.py", line 323, in _compiler
-    return dialect.statement_compiler(dialect, self, **kw)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/compiler.py", line 1462, in __init__
-    Compiled.__init__(self, dialect, statement, **kwargs)
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/compiler.py", line 902, in __init__
-    self.string = self.process(self.statement, **compile_kwargs)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/compiler.py", line 948, in process
-    return obj._compiler_dispatch(self, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/visitors.py", line 138, in _compiler_dispatch
-    return meth(self, **kw)  # type: ignore  # noqa: E501
-           ^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/compiler.py", line 4811, in visit_select
-    compile_state = select_stmt._compile_state_factory(
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/sql/base.py", line 774, in create_for_statement
-    return klass.create_for_statement(statement, compiler, **kw)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/context.py", line 447, in create_for_statement
-    return cls._create_orm_context(
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/context.py", line 1175, in _create_orm_context
-    _QueryEntity.to_compile_state(
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/context.py", line 2628, in to_compile_state
-    _MapperEntity(
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/context.py", line 2708, in __init__
-    entity._post_inspect
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/util/langhelpers.py", line 1234, in __get__
-    obj.__dict__[self.__name__] = result = self.fget(obj)
-                                           ^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/mapper.py", line 2734, in _post_inspect
-    self._check_configure()
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/mapper.py", line 2411, in _check_configure
-    _configure_registries({self.registry}, cascade=True)
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/mapper.py", line 4228, in _configure_registries
-    _do_configure_registries(registries, cascade)
-  File "/usr/local/lib/python3.12/dist-packages/sqlalchemy/orm/mapper.py", line 4265, in _do_configure_registries
-    raise e
-sqlalchemy.exc.InvalidRequestError: One or more mappers failed to initialize - can't proceed with initialization of other mappers. Triggering mapper: 'Mapper[PesaFluxPayment(pesaflux_payments)]'. Original exception was: Mapper 'Mapper[User(users)]' has no property 'pesaflux_payments'.  If this property was indicated from other mappers or configure events, ensure registry.configure() has been called.
-
-2026-07-14 09:56:11,027 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 09:56:11,051 - passlib.handlers.bcrypt - WARNING - (trapped) error reading bcrypt version
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
-    version = _bcrypt.__about__.__version__
-              ^^^^^^^^^^^^^^^^^
-AttributeError: module 'bcrypt' has no attribute '__about__'
-2026-07-14 09:56:11,058 - app.routers.auth - ERROR - Error during registration for testuser: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-2026-07-14 09:56:11,060 - app.routers.auth - ERROR - Traceback (most recent call last):
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 140, in register_final
-    password_hash=get_password_hash(data.password),
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 53, in get_password_hash
-    return pwd_context.hash(password)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/context.py", line 2258, in hash
-    return record.hash(secret, **kwds)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 779, in hash
-    self.checksum = self._calc_checksum(secret)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 591, in _calc_checksum
-    self._stub_requires_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2254, in _stub_requires_backend
-    cls.set_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2156, in set_backend
-    return owner.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2163, in set_backend
-    return cls.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2188, in set_backend
-    cls._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2311, in _set_backend
-    super(SubclassBackendMixin, cls)._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2224, in _set_backend
-    ok = loader(**kwds)
-         ^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 626, in _load_backend_mixin
-    return mixin_cls._finalize_backend_mixin(name, dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 421, in _finalize_backend_mixin
-    if detect_wrap_bug(IDENT_2A):
-       ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 380, in detect_wrap_bug
-    if verify(secret, bug_hash):
-       ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 792, in verify
-    return consteq(self._calc_checksum(secret), chk)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 655, in _calc_checksum
-    hash = _bcrypt.hashpw(secret, config)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-ValueError: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-
-2026-07-14 09:56:42,813 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 09:56:42,838 - passlib.handlers.bcrypt - WARNING - (trapped) error reading bcrypt version
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
-    version = _bcrypt.__about__.__version__
-              ^^^^^^^^^^^^^^^^^
-AttributeError: module 'bcrypt' has no attribute '__about__'
-2026-07-14 09:56:42,845 - app.routers.auth - ERROR - Error during registration for testuser: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-2026-07-14 09:56:42,847 - app.routers.auth - ERROR - Traceback (most recent call last):
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 142, in register_final
-    password_hash=get_password_hash(data.password),
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 55, in get_password_hash
-    return pwd_context.hash(truncated_password)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/context.py", line 2258, in hash
-    return record.hash(secret, **kwds)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 779, in hash
-    self.checksum = self._calc_checksum(secret)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 591, in _calc_checksum
-    self._stub_requires_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2254, in _stub_requires_backend
-    cls.set_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2156, in set_backend
-    return owner.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2163, in set_backend
-    return cls.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2188, in set_backend
-    cls._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2311, in _set_backend
-    super(SubclassBackendMixin, cls)._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2224, in _set_backend
-    ok = loader(**kwds)
-         ^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 626, in _load_backend_mixin
-    return mixin_cls._finalize_backend_mixin(name, dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 421, in _finalize_backend_mixin
-    if detect_wrap_bug(IDENT_2A):
-       ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 380, in detect_wrap_bug
-    if verify(secret, bug_hash):
-       ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 792, in verify
-    return consteq(self._calc_checksum(secret), chk)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 655, in _calc_checksum
-    hash = _bcrypt.hashpw(secret, config)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-ValueError: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-
-2026-07-14 09:57:33,445 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 09:57:33,466 - passlib.handlers.bcrypt - WARNING - (trapped) error reading bcrypt version
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
-    version = _bcrypt.__about__.__version__
-              ^^^^^^^^^^^^^^^^^
-AttributeError: module 'bcrypt' has no attribute '__about__'
-2026-07-14 09:57:33,473 - app.routers.auth - ERROR - Error during registration for testuser: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-2026-07-14 09:57:33,475 - app.routers.auth - ERROR - Traceback (most recent call last):
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 142, in register_final
-    password_hash=get_password_hash(data.password),
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/ubuntu/atlasAPI/app/routers/auth.py", line 55, in get_password_hash
-    return pwd_context.hash(truncated_password)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/context.py", line 2258, in hash
-    return record.hash(secret, **kwds)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 779, in hash
-    self.checksum = self._calc_checksum(secret)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 591, in _calc_checksum
-    self._stub_requires_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2254, in _stub_requires_backend
-    cls.set_backend()
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2156, in set_backend
-    return owner.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2163, in set_backend
-    return cls.set_backend(name, dryrun=dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2188, in set_backend
-    cls._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2311, in _set_backend
-    super(SubclassBackendMixin, cls)._set_backend(name, dryrun)
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 2224, in _set_backend
-    ok = loader(**kwds)
-         ^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 626, in _load_backend_mixin
-    return mixin_cls._finalize_backend_mixin(name, dryrun)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 421, in _finalize_backend_mixin
-    if detect_wrap_bug(IDENT_2A):
-       ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 380, in detect_wrap_bug
-    if verify(secret, bug_hash):
-       ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/utils/handlers.py", line 792, in verify
-    return consteq(self._calc_checksum(secret), chk)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib/python3.12/dist-packages/passlib/handlers/bcrypt.py", line 655, in _calc_checksum
-    hash = _bcrypt.hashpw(secret, config)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-ValueError: password cannot be longer than 72 bytes, truncate manually if necessary (e.g. my_password[:72])
-
-2026-07-14 10:00:53,844 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 10:00:54,225 - app.routers.auth - INFO - User testuser created with ID 35
-2026-07-14 10:00:54,225 - app.routers.auth - INFO - Referral code 1O7HU3D4 created for new user 35
-2026-07-14 10:00:54,247 - app.routers.auth - INFO - Registration successful for testuser
-2026-07-14 10:13:47,303 - app.routers.auth - INFO - Starting registration for username: testuser
-2026-07-14 10:13:47,602 - app.routers.auth - INFO - User testuser created with ID 36
-2026-07-14 10:13:47,602 - app.routers.auth - INFO - Referral code 8MKYBLXE created for new user 36
-2026-07-14 10:13:47,614 - app.routers.auth - INFO - Registration successful for testuser
-2026-07-14 10:26:28,452 - app.routers.auth - INFO - Starting registration for username: longpassuser
-2026-07-14 10:26:28,761 - app.routers.auth - INFO - User longpassuser created with ID 37
-2026-07-14 10:26:28,761 - app.routers.auth - INFO - Referral code PKOL4CEE created for new user 37
-2026-07-14 10:26:28,782 - app.routers.auth - INFO - Registration successful for longpassuser
+/usr/local/lib/python3.12/dist-packages/fpdf/__init__.py:40: UserWarning: You have both PyFPDF & fpdf2 installed. Both packages cannot be installed at the same time as they share the same module namespace. To only keep fpdf2, run: pip uninstall --yes pypdf && pip install --upgrade fpdf2
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/pydantic/_internal/_config.py:386: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+/usr/local/lib/python3.12/dist-packages/pydantic/_internal/_config.py:386: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+/usr/local/lib/python3.12/dist-packages/pydantic/_internal/_config.py:386: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+/usr/local/lib/python3.12/dist-packages/pydantic/_internal/_config.py:386: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+INFO:     Started server process [2592]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-07-18 09:47:13,113 - app.routers.auth - INFO - Starting registration for username: user123456
+2026-07-18 09:47:13,405 - app.routers.auth - INFO - User user123456 created with ID 1
+2026-07-18 09:47:13,405 - app.routers.auth - INFO - Referral code 46H0JFWX created for new user 1
+2026-07-18 09:47:13,408 - app.routers.auth - INFO - Registration successful for user123456
+⚠️ Migration Notice (Safe to ignore if columns exist): (sqlite3.OperationalError) near "EXISTS": syntax error
+[SQL: ALTER TABLE users ADD COLUMN IF NOT EXISTS deposit_wallet_balance FLOAT DEFAULT 0.0]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+INFO:     127.0.0.1:46272 - "POST /auth/register/final HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46276 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37552 - "POST /auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37556 - "POST /auth/login HTTP/1.1" 200 OK

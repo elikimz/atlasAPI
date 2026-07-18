@@ -46,18 +46,22 @@ class Token(BaseModel):
     token_type: str
 
 # --- Helpers ---
+import bcrypt
+
 def verify_password(plain_password, hashed_password):
     # Silently truncate password to 72 bytes for verification consistency
-    truncated_plain_password_bytes = plain_password.encode("utf-8")[:72]
-    truncated_plain_password = truncated_plain_password_bytes.decode("utf-8", "ignore")
-    return pwd_context.verify(truncated_plain_password, hashed_password)
+    # Bcrypt has a strict 72-byte limit. We use the raw bytes to ensure compliance.
+    password_bytes = plain_password.encode("utf-8")[:72]
+    if isinstance(hashed_password, str):
+        hashed_password = hashed_password.encode("utf-8")
+    return bcrypt.checkpw(password_bytes, hashed_password)
 
 def get_password_hash(password):
     # Silently truncate password to 72 bytes before hashing
-    # This ensures the byte length is strictly adhered to by bcrypt without raising an error
-    truncated_password_bytes = password.encode("utf-8")[:72]
-    truncated_password = truncated_password_bytes.decode("utf-8", "ignore")
-    return pwd_context.hash(truncated_password)
+    # Bcrypt has a strict 72-byte limit. We use the raw bytes to ensure compliance.
+    password_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
