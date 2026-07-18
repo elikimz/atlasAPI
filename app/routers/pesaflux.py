@@ -98,9 +98,6 @@ class PaymentStatusResponse(BaseModel):
     status: str          # pending | completed | failed
     plan_name: str | None
     amount_usd: float
-    amount_kes: float
-    mpesa_receipt: str | None
-    message: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,136 +112,139 @@ async def initiate_stk_push(
 ):
     """
     Initiate a PesaFlux M-Pesa STK Push for a plan purchase, upgrade, or recharge.
-
-    - Plan price is loaded from the database if plan_id is provided.
-    - If plan_id is missing, it treats it as a pure recharge using request_data.amount.
-    - A unique reference is generated for every payment attempt.
-    - The STK Push is sent to the user's phone.
-    - Returns the reference for status polling.
     """
-    plan = None
-    amount_usd = 0.0
-    payment_type = "purchase"
-    plan_name = "Account Recharge"
+    try:
+        plan = None
+        amount_usd = 0.0
+        payment_type = "purchase"
+        plan_name = "Account Recharge"
 
-    # Case A: Plan-based purchase/upgrade
-    if request_data.plan_id:
-        result = await db.execute(
-            select(models.Plan).filter(
-                models.Plan.id == request_data.plan_id,
-                models.Plan.is_active == True  # noqa: E712
+        # Case A: Plan-based purchase/upgrade
+        if request_data.plan_id:
+            result = await db.execute(
+                select(models.Plan).filter(
+                    models.Plan.id == request_data.plan_id,
+                    models.Plan.is_active == True  # noqa: E712
+                )
             )
-        )
-        plan = result.scalar_one_or_none()
-        if not plan:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Plan not found or is no longer available."
-            )
-
-        if plan.price == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The Intern (Free Trial) plan does not require payment."
-            )
-
-        if _plan_is_active(current_user):
-            result_current = await db.execute(
-                select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)
-            )
-            current_plan = result_current.scalar_one_or_none()
-            if current_plan and plan.price <= current_plan.price:
+            plan = result.scalar_one_or_none()
+            if not plan:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="You already have an active plan. To upgrade, select a higher-tier plan."
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Plan not found or is no longer available."
                 )
 
-        if _plan_is_expired(current_user):
-            result_expired = await db.execute(
-                select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)
-            )
-            expired_plan = result_expired.scalar_one_or_none()
-            if expired_plan and plan.price <= expired_plan.price:
+            if plan.price == 0:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Your previous plan has expired. You must upgrade to a higher tier."
+                    detail="The Intern (Free Trial) plan does not require payment."
                 )
 
-        amount_usd = plan.price
-        plan_name = plan.name
-        payment_type = "upgrade" if current_user.current_plan_id else "purchase"
+            if _plan_is_active(current_user):
+                result_current = await db.execute(
+                    select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)
+                )
+                current_plan = result_current.scalar_one_or_none()
+                if current_plan and plan.price <= current_plan.price:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="You already have an active plan. To upgrade, select a higher-tier plan."
+                    )
 
-    # Case B: Pure recharge (amount-based)
-    elif request_data.amount:
-        if request_data.amount < 20:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Minimum recharge amount is $20."
-            )
-        amount_usd = request_data.amount
-        payment_type = "recharge"
-        plan_name = f"Recharge ${amount_usd:.2f}"
-    
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either plan_id or amount must be provided."
-        )
+            if _plan_is_expired(current_user):
+                result_expired = await db.execute(
+                    select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)
+                )
+                expired_plan = result_expired.scalar_one_or_none()
+                if expired_plan and plan.price <= expired_plan.price:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Your previous plan has expired. You must upgrade to a higher tier."
+                    )
 
-    # 4. Convert USD to KES
-    usd_to_kes = float(getattr(settings, "PESAFLUX_USD_TO_KES_RATE", 130))
-    amount_kes = max(1, round(amount_usd * usd_to_kes))
+            amount_usd = plan.price
+            plan_name = plan.name
+            payment_type = "upgrade" if current_user.current_plan_id else "purchase"
 
-    # 5. Generate unique reference
-    plan_ref_id = plan.id if plan else "RCH"
-    reference = f"ATLAS-{current_user.id}-{plan_ref_id}-{uuid.uuid4().hex[:10].upper()}"
-
-    # 6. Create pending PesaFluxPayment record
-    pf_payment = PesaFluxPayment(
-        user_id=current_user.id,
-        plan_id=plan.id if plan else None,
-        reference=reference,
-        phone=request_data.phone, # Already normalized by Pydantic validator
-        amount=amount_kes,
-        amount_usd=amount_usd,
-        status="pending",
-        payment_type=payment_type,
-        created_at=_utc_now()
-    )
-    db.add(pf_payment)
-    await db.commit()
-
-    # 7. Call PesaFlux Service to initiate STK Push
-    init_res = await pesaflux_service.initiate_stk_push(
-        phone=pf_payment.phone,
-        amount=pf_payment.amount,
-        reference=pf_payment.reference
-    )
-
-    if not init_res["success"]:
-        # Update record as failed immediately
-        pf_payment.status = "failed"
-        await db.commit()
+        # Case B: Pure recharge (amount-based)
+        elif request_data.amount:
+            if request_data.amount < 20:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Minimum recharge amount is $20."
+                )
+            amount_usd = request_data.amount
+            payment_type = "recharge"
+            plan_name = f"Recharge ${amount_usd:.2f}"
         
-        # Handle errors from pesaflux_service
-        error_msg = init_res.get("error") or init_res.get("message") or "Failed to initiate M-Pesa payment. Please try again later."
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_msg
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either plan_id or amount must be provided."
+            )
+
+        # 4. Convert USD to KES
+        usd_to_kes = float(getattr(settings, "PESAFLUX_USD_TO_KES_RATE", 130))
+        amount_kes = max(1, round(amount_usd * usd_to_kes))
+
+        # 5. Generate unique reference
+        plan_ref_id = plan.id if plan else "RCH"
+        reference = f"ATLAS-{current_user.id}-{plan_ref_id}-{uuid.uuid4().hex[:10].upper()}"
+
+        # 6. Create pending PesaFluxPayment record
+        pf_payment = PesaFluxPayment(
+            user_id=current_user.id,
+            plan_id=plan.id if plan else None,
+            reference=reference,
+            phone=request_data.phone, # Already normalized by Pydantic validator
+            amount=amount_kes,
+            amount_usd=amount_usd,
+            status="pending",
+            payment_type=payment_type,
+            created_at=_utc_now()
+        )
+        db.add(pf_payment)
+        await db.commit()
+
+        # 7. Call PesaFlux Service to initiate STK Push
+        init_res = await pesaflux_service.initiate_stk_push(
+            phone=pf_payment.phone,
+            amount=pf_payment.amount,
+            reference=pf_payment.reference
         )
 
-    # 8. Update record with transaction request ID
-    pf_payment.transaction_request_id = init_res.get("transaction_request_id")
-    await db.commit()
+        if not init_res["success"]:
+            # Update record as failed immediately
+            pf_payment.status = "failed"
+            await db.commit()
+            
+            # Handle errors from pesaflux_service
+            error_msg = init_res.get("error") or init_res.get("message") or "Failed to initiate M-Pesa payment. Please try again later."
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=error_msg
+            )
 
-    return {
-        "reference": reference,
-        "transaction_request_id": pf_payment.transaction_request_id,
-        "amount_kes": amount_kes,
-        "amount_usd": amount_usd,
-        "plan_name": plan_name,
-        "message": "STK Push sent to your phone. Please enter your PIN to complete payment."
-    }
+        # 8. Update record with transaction request ID
+        pf_payment.transaction_request_id = init_res.get("transaction_request_id")
+        await db.commit()
+
+        return {
+            "reference": reference,
+            "transaction_request_id": pf_payment.transaction_request_id,
+            "amount_kes": amount_kes,
+            "amount_usd": amount_usd,
+            "plan_name": plan_name,
+            "message": "STK Push sent to your phone. Please enter your PIN to complete payment."
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"FATAL ERROR in /pesaflux/initiate: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal Server Error: {str(e)}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -258,8 +258,7 @@ async def get_payment_status(
     current_user: models.User = Depends(get_current_user)
 ):
     """
-    Poll the status of a PesaFlux payment by its reference.
-    Used by the frontend to show success/failure after the user enters their PIN.
+    Check the status of a PesaFlux payment attempt.
     """
     result = await db.execute(
         select(PesaFluxPayment).filter(
@@ -268,55 +267,62 @@ async def get_payment_status(
         )
     )
     payment = result.scalar_one_or_none()
-
     if not payment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment record not found."
+            detail="Payment reference not found."
         )
 
-    # If already completed or failed in our DB, return immediately
-    if payment.status in ["completed", "failed"]:
+    # If already completed or failed, return cached status
+    if payment.status != "pending":
+        plan_name = None
+        if payment.plan_id:
+            plan_res = await db.execute(select(models.Plan).filter(models.Plan.id == payment.plan_id))
+            plan = plan_res.scalar_one_or_none()
+            plan_name = plan.name if plan else "Unknown Plan"
+        
         return {
             "reference": payment.reference,
             "status": payment.status,
-            "plan_name": payment.plan.name if (payment.plan_id and payment.plan) else "Account Recharge",
-            "amount_usd": payment.amount_usd,
-            "amount_kes": payment.amount,
-            "mpesa_receipt": payment.mpesa_receipt,
-            "message": "Payment completed successfully." if payment.status == "completed" else "Payment failed."
+            "plan_name": plan_name,
+            "amount_usd": payment.amount_usd
         }
 
-    # Otherwise, check status with PesaFlux API (real-time sync)
-    status_res = await pesaflux_service.get_payment_status(payment.reference)
+    # Otherwise, check with PesaFlux (sync check)
+    status_res = await pesaflux_service.check_transaction_status(payment.reference)
     
-    if status_res["success"]:
-        provider_status = status_res.get("status", "pending") # pending | completed | failed
-        
-        if provider_status != payment.status:
-            payment.status = provider_status
-            if provider_status == "completed":
-                payment.mpesa_receipt = status_res.get("mpesa_receipt")
-                payment.completed_at = _utc_now()
-                # ── CRITICAL: Process the payment (activate plan or credit wallet) ──
-                await _process_successful_payment(payment, db)
-            
-            payment.updated_at = _utc_now()
-            await db.commit()
+    # If PesaFlux says it's completed, process it
+    if status_res["success"] and status_res["status"] == "completed":
+        await _process_successful_payment(payment, db, status_res)
+        return {
+            "reference": payment.reference,
+            "status": "completed",
+            "plan_name": status_res.get("plan_name"),
+            "amount_usd": payment.amount_usd
+        }
+    
+    # If PesaFlux says it failed
+    if status_res["success"] and status_res["status"] == "failed":
+        payment.status = "failed"
+        await db.commit()
+        return {
+            "reference": payment.reference,
+            "status": "failed",
+            "plan_name": None,
+            "amount_usd": payment.amount_usd
+        }
 
+    # Still pending
     return {
         "reference": payment.reference,
-        "status": payment.status,
-        "plan_name": payment.plan.name if (payment.plan_id and payment.plan) else "Account Recharge",
-        "amount_usd": payment.amount_usd,
-        "amount_kes": payment.amount,
-        "mpesa_receipt": payment.mpesa_receipt,
-        "message": "Waiting for payment confirmation..."
+        "status": "pending",
+        "plan_name": None,
+        "amount_usd": payment.amount_usd
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Endpoint: Webhook (Public)
+# Endpoint: PesaFlux Webhook
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/webhook")
@@ -325,150 +331,113 @@ async def pesaflux_webhook(
     db: AsyncSession = Depends(get_async_db)
 ):
     """
-    Public webhook endpoint for PesaFlux callbacks.
-    Updates payment status and activates plans/credits wallets asynchronously.
+    PesaFlux Webhook Handler.
+    PesaFlux POSTs JSON here when a transaction is completed/failed.
     """
     try:
         data = await request.json()
     except Exception:
         return {"status": "error", "message": "Invalid JSON"}
 
+    logger.info("PesaFlux Webhook received: %s", data)
+
+    # PesaFlux Webhook fields:
+    # reference, transaction_id, status, mpesa_receipt, amount, ...
     ref = data.get("reference")
-    provider_status = data.get("status") # completed | failed
-    
-    if not ref or not provider_status:
-        return {"status": "error", "message": "Missing reference or status"}
+    if not ref:
+        return {"status": "error", "message": "Missing reference"}
 
     result = await db.execute(
         select(PesaFluxPayment).filter(PesaFluxPayment.reference == ref)
     )
     payment = result.scalar_one_or_none()
-
     if not payment:
-        logger.warning(f"Webhook received for unknown reference: {ref}")
-        return {"status": "ignored", "message": "Reference not found"}
+        logger.warning("PesaFlux Webhook: Reference %s not found in DB", ref)
+        return {"status": "error", "message": "Reference not found"}
 
-    # If already processed, ignore
-    if payment.status in ["completed", "failed"]:
-        return {"status": "ignored", "message": "Already processed"}
+    if payment.status != "pending":
+        return {"status": "success", "message": "Already processed"}
 
-    # Update payment record
-    payment.status = provider_status
-    payment.mpesa_receipt = data.get("mpesa_receipt")
-    payment.provider_transaction_id = data.get("transaction_id")
-    payment.updated_at = _utc_now()
+    status_str = str(data.get("status")).lower()
+    if status_str == "completed" or status_str == "success" or status_str == "200":
+        await _process_successful_payment(payment, db, data)
+        return {"status": "success", "message": "Payment processed"}
+    else:
+        payment.status = "failed"
+        await db.commit()
+        return {"status": "success", "message": "Payment marked as failed"}
 
-    if provider_status == "completed":
-        payment.completed_at = _utc_now()
-        # ── CRITICAL: Process the payment (activate plan or credit wallet) ──
-        await _process_successful_payment(payment, db)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Internal: Success Processor
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession, provider_data: dict):
+    """
+    Side effects of a successful payment:
+    1. Update payment record
+    2. If plan_id: Activate plan (purchase or upgrade)
+    3. If no plan_id: Credit deposit wallet (recharge)
+    4. Record in main payments history
+    """
+    if payment.status == "completed":
+        return
+
+    # 1. Update payment record
+    payment.status = "completed"
+    payment.provider_transaction_id = provider_data.get("transaction_id")
+    payment.mpesa_receipt = provider_data.get("mpesa_receipt")
+    payment.completed_at = _utc_now()
+    
+    # 2. Fetch user
+    user_res = await db.execute(select(models.User).filter(models.User.id == payment.user_id))
+    user = user_res.scalar_one()
+
+    # 3. Handle Logic
+    if payment.payment_type == "recharge" or not payment.plan_id:
+        # PURE RECHARGE
+        user.deposit_wallet_balance += payment.amount_usd
+        logger.info("User %s recharged $%s via M-Pesa", user.id, payment.amount_usd)
+    else:
+        # PLAN PURCHASE OR UPGRADE
+        if payment.plan_activated == "no":
+            plan_res = await db.execute(select(models.Plan).filter(models.Plan.id == payment.plan_id))
+            plan = plan_res.scalar_one()
+            
+            # Record old plan for history if upgrading
+            old_plan_id = user.current_plan_id
+            
+            # Update user plan
+            user.current_plan_id = plan.id
+            user.plan_purchase_price = plan.price
+            user.plan_start_date = _utc_now()
+            user.plan_expiry_date = _utc_now() + timedelta(days=plan.validity_days)
+            user.has_purchased_first_package = True
+            
+            # Add to UserPlanHistory
+            history = models.UserPlanHistory(
+                user_id=user.id,
+                plan_id=plan.id,
+                purchase_price=plan.price,
+                expires_at=user.plan_expiry_date,
+                status="active",
+                pesaflux_payment_id=payment.id
+            )
+            db.add(history)
+            
+            # Mark as activated
+            payment.plan_activated = "yes"
+            logger.info("User %s activated plan %s via M-Pesa", user.id, plan.name)
+
+    # 4. Add to main Payment history table for UI visibility
+    history_payment = models.Payment(
+        user_id=user.id,
+        amount=payment.amount_usd,
+        status="completed",
+        type="deposit",
+        payment_method="M-Pesa (PesaFlux)",
+        proof_url=f"Receipt: {payment.mpesa_receipt or 'N/A'}"
+    )
+    db.add(history_payment)
 
     await db.commit()
-    return {"status": "success"}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Core Logic: Process Successful Payment
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession):
-    """
-    Activates the plan or credits the user's wallet after a successful M-Pesa payment.
-    This is called by both the polling endpoint and the webhook.
-    """
-    if payment.plan_activated == "yes":
-        return
-
-    # Load user with lock to prevent race conditions
-    user_result = await db.execute(
-        select(models.User).filter(models.User.id == payment.user_id)
-    )
-    user = user_result.scalar_one_or_none()
-    if not user:
-        return
-
-    # Case 1: Plan Purchase or Upgrade
-    if payment.plan_id and payment.payment_type in ["purchase", "upgrade"]:
-        # Load plan details
-        plan_result = await db.execute(
-            select(models.Plan).filter(models.Plan.id == payment.plan_id)
-        )
-        plan = plan_result.scalar_one_or_none()
-        if not plan:
-            return
-
-        now = _utc_now()
-        
-        # If upgrade: refund old plan price to withdrawal wallet (instant)
-        if payment.payment_type == "upgrade" and user.current_plan_id:
-            # Find active plan history for refund
-            hist_result = await db.execute(
-                select(models.UserPlanHistory).filter(
-                    models.UserPlanHistory.user_id == user.id,
-                    models.UserPlanHistory.status == "active"
-                ).order_by(models.UserPlanHistory.purchased_at.desc())
-            )
-            old_hist = hist_result.scalars().first()
-            refund_amount = old_hist.purchase_price if old_hist else (user.plan_purchase_price or 0.0)
-            
-            if refund_amount > 0:
-                user.withdrawal_wallet_balance = (user.withdrawal_wallet_balance or 0.0) + refund_amount
-                db.add(models.EarningsLog(
-                    user_id=user.id,
-                    amount=refund_amount,
-                    type="upgrade_refund",
-                    description=f"M-Pesa Upgrade: Refund for previous plan"
-                ))
-                if old_hist:
-                    old_hist.status = "upgraded"
-                    old_hist.refunded_amount = refund_amount
-
-        # Activate new plan
-        user.current_plan_id = plan.id
-        user.plan_purchase_price = plan.price
-        user.plan_start_date = now
-        user.plan_expiry_date = now + timedelta(days=plan.validity_days)
-        user.has_purchased_first_package = True
-        
-        # Create plan history entry
-        db.add(models.UserPlanHistory(
-            user_id=user.id,
-            plan_id=plan.id,
-            purchase_price=plan.price,
-            purchased_at=now,
-            expires_at=user.plan_expiry_date,
-            status="active"
-        ))
-
-        # Assign tasks for the new plan
-        task_result = await db.execute(
-            select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id)
-        )
-        for task in task_result.scalars().all():
-            db.add(models.UserVideoTask(
-                user_id=user.id,
-                video_task_id=task.id,
-                status="pending"
-            ))
-
-    # Case 2: Account Recharge
-    else:
-        # Credit the USD amount to the user's deposit wallet
-        user.deposit_wallet_balance = (user.deposit_wallet_balance or 0.0) + payment.amount_usd
-        
-        # Log to payments table for history (marked as paid/approved)
-        # Note: 'period' is a required non-null field in the models.Payment table
-        db.add(models.Payment(
-            user_id=user.id,
-            amount=payment.amount_usd,
-            period=_utc_now().strftime("%b %Y"),
-            type="deposit",
-            payment_method="M-Pesa",
-            status="paid",
-            created_at=_utc_now(),
-            admin_notes=f"Instant M-Pesa Recharge: {payment.mpesa_receipt}"
-        ))
-
-    payment.plan_activated = "yes"
-    db.add(user)
-    db.add(payment)

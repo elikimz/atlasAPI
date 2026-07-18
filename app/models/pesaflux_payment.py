@@ -69,6 +69,6 @@ class PesaFluxPayment(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    user = relationship("app.models.models.User", back_populates="pesaflux_payments")
-    plan = relationship("app.models.models.Plan")
-    user_plan_history = relationship("app.models.models.UserPlanHistory", back_populates="pesaflux_payment", uselist=False)
+    user = relationship("User", back_populates="pesaflux_payments")
+    plan = relationship("Plan")
+    user_plan_history = relationship("UserPlanHistory", back_populates="pesaflux_payment", uselist=False)
