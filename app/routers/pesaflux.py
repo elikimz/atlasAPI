@@ -218,8 +218,7 @@ async def initiate_stk_push(
     init_res = await pesaflux_service.initiate_stk_push(
         phone=pf_payment.phone,
         amount=pf_payment.amount,
-        reference=pf_payment.reference,
-        description=f"Atlas {plan_name} - {current_user.email}"
+        reference=pf_payment.reference
     )
 
     if not init_res["success"]:
@@ -227,11 +226,11 @@ async def initiate_stk_push(
         pf_payment.status = "failed"
         await db.commit()
         
-        # pesaflux_service.initiate_stk_push now returns correct status codes
-        # and user-friendly error messages in the "message" field.
+        # Handle errors from pesaflux_service
+        error_msg = init_res.get("error") or init_res.get("message") or "Failed to initiate M-Pesa payment. Please try again later."
         raise HTTPException(
-            status_code=init_res.get("status_code", status.HTTP_503_SERVICE_UNAVAILABLE),
-            detail=init_res.get("message", "Failed to initiate M-Pesa payment. Please try again later.")
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=error_msg
         )
 
     # 8. Update record with transaction request ID

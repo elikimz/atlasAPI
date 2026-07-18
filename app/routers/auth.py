@@ -216,5 +216,8 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "phone_number": current_user.phone_number,
         "role": current_user.role,
         "is_admin": current_user.is_admin,
-        "referral_code": current_user.referral_code
+        "referral_code": current_user.referral_code,
+        "deposit_wallet_balance": current_user.deposit_wallet_balance or 0.0,
+        "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance or 0.0,
+        "performance_bonus_balance": current_user.performance_bonus_balance or 0.0
     }
