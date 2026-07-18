@@ -100,7 +100,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @router.post("/auth/login", response_model=Token)
 async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.User).filter(models.User.username == login_request.username))
+    # Support login by username or email
+    result = await db.execute(
+        select(models.User).filter(
+            (models.User.username == login_request.username) |
+            (models.User.email == login_request.username)
+        )
+    )
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(login_request.password, user.password_hash):
@@ -127,6 +133,7 @@ class RegisterFinal(BaseModel):
     referral_code: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    email: Optional[str] = None
 
 import logging
 import traceback
@@ -142,12 +149,19 @@ async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_asy
             logger.warning(f"Registration failed: Username {data.username} already exists")
             raise HTTPException(status_code=400, detail="Username already registered")
         
+        # Check for duplicate email if provided
+        if data.email:
+            email_result = await db.execute(select(models.User).filter(models.User.email == data.email))
+            if email_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email already registered")
+
         user = models.User(
             username=data.username,
             password_hash=get_password_hash(data.password),
             phone_number=data.phone_number,
             first_name=data.first_name,
             last_name=data.last_name,
+            email=data.email,
             referral_code=''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         )
         
@@ -196,5 +210,6 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)):
         "email": current_user.email,
         "phone_number": current_user.phone_number,
         "role": current_user.role,
+        "is_admin": current_user.is_admin,
         "referral_code": current_user.referral_code
     }
