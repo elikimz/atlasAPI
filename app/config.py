@@ -12,11 +12,11 @@ class Settings:
     PROJECT_NAME: str = "Atlas API"
     PROJECT_VERSION: str = "1.0.0"
 
-    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
-    SECRET_KEY: str | None = os.getenv("SECRET_KEY")
-    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+    DATABASE_URL: str | None = os.getenv("APPSETTING_DATABASE_URL") or os.getenv("DATABASE_URL")
+    SECRET_KEY: str | None = os.getenv("APPSETTING_SECRET_KEY") or os.getenv("SECRET_KEY")
+    JWT_ALGORITHM: str = os.getenv("APPSETTING_JWT_ALGORITHM", "HS256") or os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("APPSETTING_ACCESS_TOKEN_EXPIRE_MINUTES", "60") or os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("APPSETTING_REFRESH_TOKEN_EXPIRE_DAYS", "30") or os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
     # The application uses bearer tokens rather than cross-site cookies. Origins
     # must be explicitly configured so browsers do not expose authenticated APIs
@@ -24,26 +24,26 @@ class Settings:
     BACKEND_CORS_ORIGINS: list[str] = [
         origin.strip().rstrip("/")
         for origin in os.getenv(
-            "BACKEND_CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
+            "APPSETTING_BACKEND_CORS_ORIGINS", os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
         ).split(",")
         if origin.strip()
     ]
 
-    CLOUDINARY_CLOUD_NAME: str | None = os.getenv("CLOUDINARY_CLOUD_NAME")
-    CLOUDINARY_API_KEY: str | None = os.getenv("CLOUDINARY_API_KEY")
-    CLOUDINARY_API_SECRET: str | None = os.getenv("CLOUDINARY_API_SECRET")
+    CLOUDINARY_CLOUD_NAME: str | None = os.getenv("APPSETTING_CLOUDINARY_CLOUD_NAME") or os.getenv("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_API_KEY: str | None = os.getenv("APPSETTING_CLOUDINARY_API_KEY") or os.getenv("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_SECRET: str | None = os.getenv("APPSETTING_CLOUDINARY_API_SECRET") or os.getenv("CLOUDINARY_API_SECRET")
 
-    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    EMAIL_SENDER: str | None = os.getenv("EMAIL_SENDER")
-    EMAIL_APP_PASSWORD: str | None = os.getenv("EMAIL_APP_PASSWORD")
+    SMTP_SERVER: str = os.getenv("APPSETTING_SMTP_SERVER", "smtp.gmail.com") or os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("APPSETTING_SMTP_PORT", "587") or os.getenv("SMTP_PORT", "587"))
+    EMAIL_SENDER: str | None = os.getenv("APPSETTING_EMAIL_SENDER") or os.getenv("EMAIL_SENDER")
+    EMAIL_APP_PASSWORD: str | None = os.getenv("APPSETTING_EMAIL_APP_PASSWORD") or os.getenv("EMAIL_APP_PASSWORD")
 
     # PesaFlux credentials remain backend-only. The webhook payload is validated
     # against an existing, user-owned payment record because the provider's
     # published webhook documentation does not specify a signing scheme.
-    PESAFLUX_API_KEY: str = os.getenv("PESAFLUX_API_KEY", "")
-    PESAFLUX_EMAIL: str = os.getenv("PESAFLUX_EMAIL", "")
-    PESAFLUX_USD_TO_KES_RATE: float = float(os.getenv("PESAFLUX_USD_TO_KES_RATE", "130"))
+    PESAFLUX_API_KEY: str = os.getenv("APPSETTING_PESAFLUX_API_KEY", "") or os.getenv("PESAFLUX_API_KEY", "")
+    PESAFLUX_EMAIL: str = os.getenv("APPSETTING_PESAFLUX_EMAIL", "") or os.getenv("PESAFLUX_EMAIL", "")
+    PESAFLUX_USD_TO_KES_RATE: float = float(os.getenv("APPSETTING_PESAFLUX_USD_TO_KES_RATE", "130") or os.getenv("PESAFLUX_USD_TO_KES_RATE", "130"))
 
     def validate_runtime_security(self) -> None:
         if not self.DATABASE_URL:
