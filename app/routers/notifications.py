@@ -119,6 +119,17 @@ async def send_notification(
 ):
     """Admin endpoint to send a new notification to a specific user or globally."""
 
+    # Validate that user_id (if provided) references an existing user
+    if notification_data.user_id is not None:
+        user_result = await db.execute(
+            select(models.User).filter(models.User.id == notification_data.user_id)
+        )
+        if user_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User with id {notification_data.user_id} does not exist"
+            )
+
     new_notification = models.Notification(
         user_id=notification_data.user_id,
         title=notification_data.title,

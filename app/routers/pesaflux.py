@@ -105,6 +105,9 @@ class PaymentStatusResponse(BaseModel):
     status: str          # pending | completed | failed
     plan_name: str | None
     amount_usd: float
+    amount_kes: float = 0
+    mpesa_receipt: str | None = None
+    message: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,11 +308,20 @@ async def get_payment_status(
             plan = plan_res.scalar_one_or_none()
             plan_name = plan.name if plan else "Unknown Plan"
         
+        msg = ""
+        if payment.status == "completed":
+            msg = f"Payment of ${payment.amount_usd:.2f} via M-Pesa was successful."
+        elif payment.status == "failed":
+            msg = "Payment was not completed."
+        
         return {
             "reference": payment.reference,
             "status": payment.status,
             "plan_name": plan_name,
-            "amount_usd": payment.amount_usd
+            "amount_usd": payment.amount_usd,
+            "amount_kes": payment.amount,
+            "mpesa_receipt": payment.mpesa_receipt,
+            "message": msg,
         }
 
     # Otherwise, check with PesaFlux (sync check)
@@ -318,7 +330,10 @@ async def get_payment_status(
             "reference": payment.reference,
             "status": "pending",
             "plan_name": None,
-            "amount_usd": payment.amount_usd
+            "amount_usd": payment.amount_usd,
+            "amount_kes": payment.amount,
+            "mpesa_receipt": None,
+            "message": "",
         }
     
     status_res = await pesaflux_service.get_payment_status(payment.transaction_request_id)
@@ -338,13 +353,25 @@ async def get_payment_status(
                 "status": "pending",
                 "plan_name": None,
                 "amount_usd": payment.amount_usd,
+                "amount_kes": payment.amount,
+                "mpesa_receipt": None,
+                "message": "",
             }
         await _process_successful_payment(payment, db, status_res)
+        # Get plan_name from local DB (provider doesn't return it)
+        local_plan_name = None
+        if payment.plan_id:
+            plan_res = await db.execute(select(models.Plan).filter(models.Plan.id == payment.plan_id))
+            local_plan = plan_res.scalar_one_or_none()
+            local_plan_name = local_plan.name if local_plan else None
         return {
             "reference": payment.reference,
             "status": "completed",
-            "plan_name": status_res.get("plan_name"),
+            "plan_name": local_plan_name,
             "amount_usd": payment.amount_usd,
+            "amount_kes": payment.amount,
+            "mpesa_receipt": payment.mpesa_receipt,
+            "message": f"Payment of ${payment.amount_usd:.2f} via M-Pesa was successful.",
         }
     
     # If PesaFlux says it failed
@@ -355,7 +382,10 @@ async def get_payment_status(
             "reference": payment.reference,
             "status": "failed",
             "plan_name": None,
-            "amount_usd": payment.amount_usd
+            "amount_usd": payment.amount_usd,
+            "amount_kes": payment.amount,
+            "mpesa_receipt": None,
+            "message": "Payment was not completed.",
         }
 
     # Still pending
@@ -363,7 +393,10 @@ async def get_payment_status(
         "reference": payment.reference,
         "status": "pending",
         "plan_name": None,
-        "amount_usd": payment.amount_usd
+        "amount_usd": payment.amount_usd,
+        "amount_kes": payment.amount,
+        "mpesa_receipt": None,
+        "message": "",
     }
 
 
@@ -479,6 +512,16 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
             user.plan_start_date = _utc_now()
             user.plan_expiry_date = _utc_now() + timedelta(days=plan.validity_days)
             user.has_purchased_first_package = True
+            
+            # For STK-based plan purchases/upgrades, the user pays directly via M-Pesa.
+            # The deposit wallet is NOT deducted (the user already paid externally).
+            # For upgrades, credit the old plan price to withdrawal wallet immediately.
+            if payment.payment_type == "upgrade" and old_plan_id:
+                old_plan_res = await db.execute(select(models.Plan).filter(models.Plan.id == old_plan_id))
+                old_plan = old_plan_res.scalar_one_or_none()
+                if old_plan:
+                    user.withdrawal_wallet_balance = (user.withdrawal_wallet_balance or 0.0) + old_plan.price
+                    logger.info("User %s upgraded via STK: credited $%s old plan price to withdrawal", user.id, old_plan.price)
             
             # Add to UserPlanHistory
             history = models.UserPlanHistory(

@@ -264,7 +264,13 @@ async def create_referral_code(
     await db.commit()
     await db.refresh(new_code)
     
-    return {"code": new_code.code, "signups": 0, "trained": 0, "earned": 0.0}
+    return {
+        "code": new_code.code,
+        "signups": 0,
+        "trained": 0,
+        "earned": 0.0,
+        "task_rebate": 0.0
+    }
 
 # --- Payments ---
 class PaymentOverview(BaseModel):
@@ -413,6 +419,7 @@ class WithdrawalAccountSchema(BaseModel):
     network: Optional[str]
     is_verified: bool
     is_primary: bool
+    full_name: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -423,6 +430,7 @@ class WithdrawalAccountCreate(BaseModel):
     address: str
     network: Optional[str]
     is_primary: bool = False
+    full_name: Optional[str] = None
 
 @router.get("/withdrawal-accounts", response_model=List[WithdrawalAccountSchema])
 async def get_withdrawal_accounts(
@@ -466,7 +474,7 @@ class WithdrawalRequest(BaseModel):
 
 class WithdrawalPasswordUpdate(BaseModel):
     current_password: Optional[str] = Field(default=None, min_length=1, max_length=72)
-    new_password: str = Field(min_length=8, max_length=72)
+    new_password: str = Field(min_length=4, max_length=72)
 
 
 def _verify_withdrawal_password(plain_password: str, stored_password: str) -> bool:
@@ -535,7 +543,7 @@ async def request_withdrawal(
         )
         
         # Deduct balance
-        current_user.withdrawal_wallet_balance -= withdrawal_data.amount
+        current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) - withdrawal_data.amount
         
         db.add(new_payment)
         await db.commit()
@@ -628,7 +636,14 @@ async def update_profile(
     
     await db.commit()
     await db.refresh(current_user)
-    return current_user
+    return {
+        "username": current_user.username,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "email": current_user.email,
+        "phone_number": current_user.phone_number,
+        "has_withdrawal_password": bool(current_user.withdrawal_password)
+    }
 
 @router.delete("/settings/account", response_model=dict)
 async def delete_account(

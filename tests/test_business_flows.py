@@ -131,8 +131,10 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
 
     purchase = await client.post(f"/plans/purchase/{plan.id}", headers=headers)
     assert purchase.status_code == 200
-    assert purchase.json()["plan_id"] == plan.id
-    assert purchase.json()["status"] == "active"
+    body = purchase.json()
+    # Response shape is { plan_history: {...}, user: {...} }
+    assert body["plan_history"]["plan_id"] == plan.id
+    assert body["plan_history"]["status"] == "active"
 
     await test_db.refresh(purchaser)
     await test_db.refresh(referrer)

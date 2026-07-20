@@ -12,6 +12,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database.database import get_async_db
@@ -191,11 +192,19 @@ async def get_current_user(
         raise credentials_exception
 
     if str(subject).isdigit():
-        result = await db.execute(select(models.User).filter(models.User.id == int(subject)))
+        result = await db.execute(
+            select(models.User)
+            .options(selectinload(models.User.current_plan))
+            .filter(models.User.id == int(subject))
+        )
     else:
         # Tokens issued before this migration used usernames as subjects. They are
         # accepted only while still signed and still valid, then replaced at login.
-        result = await db.execute(select(models.User).filter(models.User.username == str(subject)))
+        result = await db.execute(
+            select(models.User)
+            .options(selectinload(models.User.current_plan))
+            .filter(models.User.username == str(subject))
+        )
     user = result.scalar_one_or_none()
     if user is None:
         raise credentials_exception
@@ -360,6 +369,21 @@ async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_asy
 
 @router.get("/auth/me")
 async def read_users_me(current_user: models.User = Depends(get_current_user)) -> dict:
+    # Build current_plan object if available
+    current_plan = None
+    if current_user.current_plan_id:
+        plan = current_user.current_plan
+        if plan:
+            current_plan = {
+                "id": plan.id,
+                "name": plan.name,
+                "price": plan.price,
+                "daily_tasks_limit": plan.daily_tasks_limit,
+                "validity_days": plan.validity_days,
+                "description": plan.description,
+                "is_upgrade_only": plan.is_upgrade_only,
+            }
+
     return {
         "id": current_user.id,
         "username": current_user.username,
@@ -375,4 +399,8 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)) -
         "deposit_wallet_balance": current_user.deposit_wallet_balance or 0.0,
         "withdrawal_wallet_balance": current_user.withdrawal_wallet_balance or 0.0,
         "performance_bonus_balance": current_user.performance_bonus_balance or 0.0,
+        "current_plan_id": current_user.current_plan_id,
+        "plan_start_date": current_user.plan_start_date.isoformat() if current_user.plan_start_date else None,
+        "plan_expiry_date": current_user.plan_expiry_date.isoformat() if current_user.plan_expiry_date else None,
+        "current_plan": current_plan,
     }

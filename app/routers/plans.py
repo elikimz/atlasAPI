@@ -44,7 +44,7 @@ async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
     return plans
 
 
-@router.post("/purchase/{plan_id}", response_model=plan_schemas.UserPlanHistory)
+@router.post("/purchase/{plan_id}")
 async def purchase_plan(
     plan_id: int,
     db: AsyncSession = Depends(get_async_db),
@@ -77,7 +77,7 @@ async def purchase_plan(
             )
 
     # Deposit Wallet: only deduct from deposit_wallet_balance (never from earnings)
-    if plan.price > 0 and current_user.deposit_wallet_balance < plan.price:
+    if plan.price > 0 and (current_user.deposit_wallet_balance or 0) < plan.price:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Insufficient deposit wallet balance to purchase this plan."
@@ -194,16 +194,27 @@ async def purchase_plan(
 
     await db.commit()
     await db.refresh(user_plan_history)
-    await db.execute(
+
+    # Return user plan history along with updated user balances
+    user_result = await db.execute(
         select(models.User)
         .options(selectinload(models.User.current_plan))
         .filter(models.User.id == current_user.id)
     )
+    refreshed_user = user_result.scalar_one()
 
-    return user_plan_history
+    return {
+        "plan_history": user_plan_history,
+        "user": {
+            "id": refreshed_user.id,
+            "current_plan_id": refreshed_user.current_plan_id,
+            "deposit_wallet_balance": refreshed_user.deposit_wallet_balance or 0.0,
+            "withdrawal_wallet_balance": refreshed_user.withdrawal_wallet_balance or 0.0,
+        }
+    }
 
 
-@router.post("/upgrade/{new_plan_id}", response_model=plan_schemas.UserPlanHistory)
+@router.post("/upgrade/{new_plan_id}")
 async def upgrade_plan(
     new_plan_id: int,
     db: AsyncSession = Depends(get_async_db),
@@ -263,7 +274,7 @@ async def upgrade_plan(
     )
 
     # RULE: Full price of the new plan is deducted from the deposit wallet
-    if current_user.deposit_wallet_balance < new_plan.price:
+    if (current_user.deposit_wallet_balance or 0) < new_plan.price:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -277,7 +288,7 @@ async def upgrade_plan(
     now = _utc_now()
 
     # Deduct the FULL price of the new plan from the deposit wallet
-    current_user.deposit_wallet_balance -= new_plan.price
+    current_user.deposit_wallet_balance = (current_user.deposit_wallet_balance or 0.0) - new_plan.price
 
     # Mark first-purchase flag
     if new_plan.price > 0:
@@ -296,7 +307,7 @@ async def upgrade_plan(
     if refund_amount > 0:
         # Credit to withdrawal wallet (cashable)
         current_user.withdrawal_wallet_balance = (current_user.withdrawal_wallet_balance or 0.0) + refund_amount
-        db.add(current_user) # Ensure user state is saved
+        db.add(current_user)  # Ensure user state is saved
         
         # Log to EarningsLog for period tracking
         db.add(models.EarningsLog(
@@ -357,13 +368,24 @@ async def upgrade_plan(
 
     await db.commit()
     await db.refresh(new_user_plan_history)
-    await db.execute(
+
+    # Return user plan history along with updated user balances
+    user_result = await db.execute(
         select(models.User)
         .options(selectinload(models.User.current_plan))
         .filter(models.User.id == current_user.id)
     )
+    refreshed_user = user_result.scalar_one()
 
-    return new_user_plan_history
+    return {
+        "plan_history": new_user_plan_history,
+        "user": {
+            "id": refreshed_user.id,
+            "current_plan_id": refreshed_user.current_plan_id,
+            "deposit_wallet_balance": refreshed_user.deposit_wallet_balance or 0.0,
+            "withdrawal_wallet_balance": refreshed_user.withdrawal_wallet_balance or 0.0,
+        }
+    }
 
 
 @router.post("/release-refunds", response_model=dict)

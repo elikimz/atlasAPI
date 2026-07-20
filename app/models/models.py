@@ -227,6 +227,7 @@ class WithdrawalAccount(Base):
     network = Column(String, nullable=True) # ERC20, BEP20, etc.
     is_verified = Column(Boolean, default=False)
     is_primary = Column(Boolean, default=False)
+    full_name = Column(String, nullable=True)  # For M-Pesa: account holder name
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="withdrawal_accounts")

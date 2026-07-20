@@ -288,8 +288,8 @@ class DashboardSummary(BaseModel):
     task_earnings: float            # User's own completed task rewards
     referral_commission: float      # Multi-tier invite commissions (first-purchase only)
     task_rebate_commission: float   # Multi-tier task rebates from downline activity
-    bonus_refunded: float           # Released upgrade refunds (post 3-day lock)
-    pending_refund: float           # Upgrade refunds still within the 3-day lock period
+    bonus_refunded: float           # Released upgrade refunds (immediate release)
+    pending_refund: float           # Legacy upgrade refunds still pending (should be 0 for new upgrades)
 
 
 class LearningHubContent(BaseModel):
