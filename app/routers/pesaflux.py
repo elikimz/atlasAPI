@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -64,13 +64,20 @@ def _plan_is_expired(user: models.User) -> bool:
     return bool(user.current_plan_id and (expiry is None or expiry <= _utc_now()))
 
 
+def _amount_matches(reported_amount: object, expected_amount: float) -> bool:
+    try:
+        return abs(float(reported_amount) - float(expected_amount)) < 0.01
+    except (TypeError, ValueError):
+        return False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Schemas
 # ─────────────────────────────────────────────────────────────────────────────
 
 class InitiateStkRequest(BaseModel):
-    plan_id: int | None = None
-    amount: float | None = None
+    plan_id: int | None = Field(default=None, gt=0)
+    amount: float | None = Field(default=None, gt=0)
     phone: str
 
     @field_validator("phone")
@@ -256,11 +263,11 @@ async def initiate_stk_push(
         }
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"FATAL ERROR in /pesaflux/initiate: {str(e)}", exc_info=True)
+    except Exception:
+        logger.exception("Unexpected PesaFlux initiation error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal Server Error: {str(e)}"
+            detail="Unable to initiate payment. Please try again later.",
         )
 
 
@@ -316,14 +323,28 @@ async def get_payment_status(
     
     status_res = await pesaflux_service.get_payment_status(payment.transaction_request_id)
     
-    # If PesaFlux says it's completed, process it
+    # Confirm the provider response matches our own pending record before any
+    # wallet credit or plan activation is allowed.
     if status_res["success"] and status_res["status"] == "completed":
+        reported_reference = status_res.get("transaction_reference")
+        reported_amount = status_res.get("transaction_amount")
+        if (
+            (reported_reference and reported_reference != payment.reference)
+            or (reported_amount is not None and not _amount_matches(reported_amount, payment.amount))
+        ):
+            logger.error("PesaFlux status mismatch for payment reference=%s", payment.reference)
+            return {
+                "reference": payment.reference,
+                "status": "pending",
+                "plan_name": None,
+                "amount_usd": payment.amount_usd,
+            }
         await _process_successful_payment(payment, db, status_res)
         return {
             "reference": payment.reference,
             "status": "completed",
             "plan_name": status_res.get("plan_name"),
-            "amount_usd": payment.amount_usd
+            "amount_usd": payment.amount_usd,
         }
     
     # If PesaFlux says it failed
@@ -353,44 +374,64 @@ async def get_payment_status(
 @router.post("/webhook")
 async def pesaflux_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    PesaFlux Webhook Handler.
-    PesaFlux POSTs JSON here when a transaction is completed/failed.
-    """
+    """Reconcile documented PesaFlux callbacks only after provider verification."""
     try:
         data = await request.json()
     except Exception:
-        return {"status": "error", "message": "Invalid JSON"}
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
 
-    logger.info("PesaFlux Webhook received: %s", data)
+    # The provider documents TransactionReference/ResponseCode. The lowercase
+    # fallbacks retain compatibility with the previously deployed callback shape.
+    reference = data.get("TransactionReference") or data.get("reference")
+    if not reference:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing transaction reference")
 
-    # PesaFlux Webhook fields:
-    # reference, transaction_id, status, mpesa_receipt, amount, ...
-    ref = data.get("reference")
-    if not ref:
-        return {"status": "error", "message": "Missing reference"}
-
-    result = await db.execute(
-        select(PesaFluxPayment).filter(PesaFluxPayment.reference == ref)
-    )
+    result = await db.execute(select(PesaFluxPayment).filter(PesaFluxPayment.reference == reference))
     payment = result.scalar_one_or_none()
     if not payment:
-        logger.warning("PesaFlux Webhook: Reference %s not found in DB", ref)
-        return {"status": "error", "message": "Reference not found"}
-
+        logger.warning("PesaFlux callback referenced an unknown payment")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment reference not found")
     if payment.status != "pending":
         return {"status": "success", "message": "Already processed"}
 
-    status_str = str(data.get("status")).lower()
-    if status_str == "completed" or status_str == "success" or status_str == "200":
-        await _process_successful_payment(payment, db, data)
+    callback_amount = data.get("TransactionAmount") or data.get("amount")
+    callback_phone = data.get("Msisdn") or data.get("phone")
+    if callback_amount is not None and not _amount_matches(callback_amount, payment.amount):
+        logger.error("PesaFlux callback amount mismatch for payment reference=%s", payment.reference)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Callback amount mismatch")
+    if callback_phone and _normalize_phone(str(callback_phone)) != payment.phone:
+        logger.error("PesaFlux callback phone mismatch for payment reference=%s", payment.reference)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Callback phone mismatch")
+
+    response_code = str(data.get("ResponseCode", "")).strip()
+    reported_status = str(data.get("status", data.get("TransactionStatus", ""))).lower()
+    is_success = response_code in {"0", "200"} or reported_status in {"completed", "success"}
+    is_failure = bool(response_code) and response_code not in {"0", "200"}
+
+    if is_success:
+        if not payment.transaction_request_id:
+            logger.warning("PesaFlux callback received before request id was persisted")
+            return {"status": "accepted", "message": "Awaiting status verification"}
+        verified = await pesaflux_service.get_payment_status(payment.transaction_request_id)
+        if not verified.get("success") or verified.get("status") != "completed":
+            return {"status": "accepted", "message": "Awaiting provider status verification"}
+        if (
+            (verified.get("transaction_reference") and verified["transaction_reference"] != payment.reference)
+            or (verified.get("transaction_amount") is not None and not _amount_matches(verified["transaction_amount"], payment.amount))
+        ):
+            logger.error("PesaFlux verification mismatch for payment reference=%s", payment.reference)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider verification mismatch")
+        await _process_successful_payment(payment, db, verified)
         return {"status": "success", "message": "Payment processed"}
-    else:
+
+    if is_failure:
         payment.status = "failed"
         await db.commit()
         return {"status": "success", "message": "Payment marked as failed"}
+
+    return {"status": "accepted", "message": "Callback received; awaiting final status"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -410,8 +451,8 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
 
     # 1. Update payment record
     payment.status = "completed"
-    payment.provider_transaction_id = provider_data.get("transaction_id")
-    payment.mpesa_receipt = provider_data.get("mpesa_receipt")
+    payment.provider_transaction_id = provider_data.get("transaction_id") or provider_data.get("TransactionID")
+    payment.mpesa_receipt = provider_data.get("mpesa_receipt") or provider_data.get("TransactionReceipt")
     payment.completed_at = _utc_now()
     
     # 2. Fetch user
@@ -421,7 +462,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
     # 3. Handle Logic
     if payment.payment_type == "recharge" or not payment.plan_id:
         # PURE RECHARGE
-        user.deposit_wallet_balance += payment.amount_usd
+        user.deposit_wallet_balance = (user.deposit_wallet_balance or 0.0) + payment.amount_usd
         logger.info("User %s recharged $%s via M-Pesa", user.id, payment.amount_usd)
     else:
         # PLAN PURCHASE OR UPGRADE

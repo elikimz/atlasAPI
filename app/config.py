@@ -3,35 +3,55 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Settings:
-    PROJECT_NAME: str = "Adpulse API"
+    PROJECT_NAME: str = "Atlas API"
     PROJECT_VERSION: str = "1.0.0"
 
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    SECRET_KEY = os.getenv("SECRET_KEY")
-    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 43200))
+    DATABASE_URL: str | None = os.getenv("DATABASE_URL")
+    SECRET_KEY: str | None = os.getenv("SECRET_KEY")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
-    # CORS settings
-    BACKEND_CORS_ORIGINS = os.getenv("BACKEND_CORS_ORIGINS", "*").split(",")
+    # The application uses bearer tokens rather than cross-site cookies. Origins
+    # must be explicitly configured so browsers do not expose authenticated APIs
+    # to arbitrary websites.
+    BACKEND_CORS_ORIGINS: list[str] = [
+        origin.strip().rstrip("/")
+        for origin in os.getenv(
+            "BACKEND_CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
+        ).split(",")
+        if origin.strip()
+    ]
 
-    CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
-    CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
-    CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
-    
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-    EMAIL_SENDER = os.getenv("EMAIL_SENDER", "adpulseai2@gmail.com")
-    EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "xxjhvcdmhzeoekgj")
+    CLOUDINARY_CLOUD_NAME: str | None = os.getenv("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_API_KEY: str | None = os.getenv("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_SECRET: str | None = os.getenv("CLOUDINARY_API_SECRET")
 
-    if "*" in BACKEND_CORS_ORIGINS:
-        BACKEND_CORS_ORIGINS = ["*"]
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    EMAIL_SENDER: str | None = os.getenv("EMAIL_SENDER")
+    EMAIL_APP_PASSWORD: str | None = os.getenv("EMAIL_APP_PASSWORD")
 
-    # ── PesaFlux M-Pesa STK Push (NEW — additive only) ──────────────────────
-    # These credentials are BACKEND-ONLY. Never expose to frontend.
+    # PesaFlux credentials remain backend-only. The webhook payload is validated
+    # against an existing, user-owned payment record because the provider's
+    # published webhook documentation does not specify a signing scheme.
     PESAFLUX_API_KEY: str = os.getenv("PESAFLUX_API_KEY", "")
     PESAFLUX_EMAIL: str = os.getenv("PESAFLUX_EMAIL", "")
-    # Conversion rate: 1 USD = N KES. Override in production env as needed.
     PESAFLUX_USD_TO_KES_RATE: float = float(os.getenv("PESAFLUX_USD_TO_KES_RATE", "130"))
+
+    def validate_runtime_security(self) -> None:
+        if not self.DATABASE_URL:
+            raise RuntimeError("DATABASE_URL must be configured before starting the API.")
+        if not self.SECRET_KEY or len(self.SECRET_KEY) < 32:
+            raise RuntimeError("SECRET_KEY must be configured with at least 32 characters before starting the API.")
+        if self.JWT_ALGORITHM != "HS256":
+            raise RuntimeError("JWT_ALGORITHM must be HS256 unless the JWT implementation is updated accordingly.")
+        if self.ACCESS_TOKEN_EXPIRE_MINUTES <= 0 or self.REFRESH_TOKEN_EXPIRE_DAYS <= 0:
+            raise RuntimeError("Token expiration settings must be positive.")
+        if not self.BACKEND_CORS_ORIGINS or "*" in self.BACKEND_CORS_ORIGINS:
+            raise RuntimeError("BACKEND_CORS_ORIGINS must list explicit allowed origins.")
+
 
 settings = Settings()

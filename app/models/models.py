@@ -47,17 +47,20 @@ class User(Base):
     referral_relationship = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.user_id", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     referrals_given = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.referrer_id", back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
     pesaflux_payments = relationship("PesaFluxPayment", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
-class OTP(Base):
-    __tablename__ = "otps"
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, index=True, nullable=False)
-    otp_code = Column(String, nullable=False)
-    is_used = Column(Boolean, default=False) # New: track usage
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    ip_address = Column(String, nullable=True) # New: for security audit
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_id = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="refresh_tokens")
 
 class Certification(Base):
     __tablename__ = "certifications"

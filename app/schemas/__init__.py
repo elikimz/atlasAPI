@@ -21,16 +21,6 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
-class OTPRequest(BaseModel):
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    referral_code: Optional[str] = None
-
-class OTPVerify(BaseModel):
-    email: str
-    otp_code: str
-
 class Token(BaseModel):
     access_token: str
     token_type: str

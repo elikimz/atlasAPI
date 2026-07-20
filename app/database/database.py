@@ -38,16 +38,21 @@ if "postgresql" in DATABASE_URL:
 # Async engine configuration:
 # - pool_pre_ping checks a pooled connection before handing it to a request.
 # - pool_recycle prevents very old idle connections from being reused.
-# Together, these avoid asyncpg "connection is closed" errors after DB/proxy idle timeouts.
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=5,
-    max_overflow=10,
-    connect_args=connect_args,
-)
+# PostgreSQL supports the explicit queue-pool settings below, while SQLite's
+# async dialect uses a StaticPool and rejects pool_size/max_overflow.
+engine_options = {
+    "echo": False,
+    "pool_pre_ping": True,
+    "connect_args": connect_args,
+}
+if not DATABASE_URL.startswith("sqlite"):
+    engine_options.update(
+        pool_recycle=300,
+        pool_size=5,
+        max_overflow=10,
+    )
+
+engine = create_async_engine(DATABASE_URL, **engine_options)
 
 # SessionMaker
 AsyncSessionLocal = sessionmaker(

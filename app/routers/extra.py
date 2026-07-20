@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
+from hmac import compare_digest
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
 from app.database.database import get_async_db
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_admin_user, get_current_user, get_password_hash, verify_password
 from app.models import models
 from app.config import settings
 
@@ -458,13 +459,21 @@ async def add_withdrawal_account(
 
 # --- Withdrawal Workflow ---
 class WithdrawalRequest(BaseModel):
-    amount: float
-    account_id: int
-    password: str
+    amount: float = Field(gt=0)
+    account_id: int = Field(gt=0)
+    password: str = Field(min_length=1, max_length=72)
+
 
 class WithdrawalPasswordUpdate(BaseModel):
-    current_password: Optional[str] = None
-    new_password: str
+    current_password: Optional[str] = Field(default=None, min_length=1, max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
+def _verify_withdrawal_password(plain_password: str, stored_password: str) -> bool:
+    """Verify hashed values and support a one-time migration from legacy plaintext."""
+    if stored_password.startswith(("$2a$", "$2b$", "$2y$")):
+        return verify_password(plain_password, stored_password)
+    return compare_digest(stored_password, plain_password)
 
 @router.post("/settings/withdrawal-password", response_model=dict)
 async def update_withdrawal_password(
@@ -472,15 +481,14 @@ async def update_withdrawal_password(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # If a password already exists, require the current one
+    # If a password already exists, require the current value before replacement.
     if current_user.withdrawal_password:
         if not data.current_password:
-            raise HTTPException(status_code=400, detail="Current withdrawal password is required to set a new one.")
-        if current_user.withdrawal_password != data.current_password:
-            raise HTTPException(status_code=400, detail="Incorrect current withdrawal password.")
-    
-    # Update to new password
-    current_user.withdrawal_password = data.new_password
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current withdrawal password is required to set a new one.")
+        if not _verify_withdrawal_password(data.current_password, current_user.withdrawal_password):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current withdrawal password.")
+
+    current_user.withdrawal_password = get_password_hash(data.new_password)
     await db.commit()
     return {"message": "Withdrawal password updated successfully"}
 
@@ -490,12 +498,15 @@ async def request_withdrawal(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    # 1. Verify withdrawal password
-    if not current_user.withdrawal_password or current_user.withdrawal_password != withdrawal_data.password:
-        raise HTTPException(status_code=403, detail="Invalid withdrawal password")
-    
+    # 1. Verify the withdrawal password. Successful legacy plaintext checks are
+    # immediately upgraded to bcrypt so users are not locked out during rollout.
+    if not current_user.withdrawal_password or not _verify_withdrawal_password(withdrawal_data.password, current_user.withdrawal_password):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid withdrawal password")
+    if not current_user.withdrawal_password.startswith(("$2a$", "$2b$", "$2y$")):
+        current_user.withdrawal_password = get_password_hash(withdrawal_data.password)
+
     # 2. Check balance
-    if current_user.withdrawal_wallet_balance < withdrawal_data.amount:
+    if (current_user.withdrawal_wallet_balance or 0.0) < withdrawal_data.amount:
         raise HTTPException(status_code=400, detail="Insufficient withdrawal balance")
     
     # 3. Get account details
@@ -547,8 +558,8 @@ class UserProfile(BaseModel):
     has_withdrawal_password: bool
 
 class UserProfileUpdate(BaseModel):
-    first_name: Optional[str]
-    last_name: Optional[str]
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
 class AppConfigSchema(BaseModel):
     key: str
@@ -589,12 +600,9 @@ async def get_app_config(db: AsyncSession = Depends(get_async_db)):
 @router.put("/admin/config", response_model=dict)
 async def update_app_config(
     config_data: AppConfigSchema,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
     result = await db.execute(select(models.AppConfig).filter(models.AppConfig.key == config_data.key))
     config = result.scalar_one_or_none()
     

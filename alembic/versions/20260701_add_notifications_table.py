@@ -23,7 +23,7 @@ def upgrade() -> None:
         sa.Column('message', sa.String(), nullable=False),
         sa.Column('type', sa.String(), server_default='info', nullable=False),
         sa.Column('is_read', sa.Boolean(), server_default='0', nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP') if op.get_bind().dialect.name == 'sqlite' else sa.text('now()'), nullable=True),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
     )

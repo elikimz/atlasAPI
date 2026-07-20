@@ -27,7 +27,7 @@ def upgrade() -> None:
     sa.Column('description', sa.String(), nullable=True),
     sa.Column('video_url', sa.String(), nullable=False),
     sa.Column('reward_amount', sa.Float(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP') if op.get_bind().dialect.name == 'sqlite' else sa.text('now()'), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_video_tasks_id'), 'video_tasks', ['id'], unique=False)

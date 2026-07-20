@@ -7,7 +7,7 @@ from datetime import datetime
 
 from app.database.database import get_async_db
 from app.models import models
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_admin_user, get_current_user
 
 router = APIRouter()
 
@@ -89,7 +89,7 @@ async def delete_notification(
         raise HTTPException(status_code=404, detail="Notification not found")
 
     # Allow deletion if it's the user's notification or if it's a global notification and the user is an admin
-    if notification.user_id == current_user.id or (notification.user_id is None and current_user.is_admin):
+    if notification.user_id == current_user.id or (notification.user_id is None and (current_user.role == "admin" or current_user.is_admin)):
         await db.execute(delete(models.Notification).filter(models.Notification.id == notification_id))
         await db.commit()
         return {"message": "Notification deleted successfully"}
@@ -114,12 +114,10 @@ async def clear_all_notifications(
 @router.post("/admin/notifications/send", response_model=NotificationSchema, status_code=status.HTTP_201_CREATED)
 async def send_notification(
     notification_data: NotificationCreate,
-    current_user: models.User = Depends(get_current_user), # Admin check will be done here
+    current_user: models.User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_async_db)
 ):
     """Admin endpoint to send a new notification to a specific user or globally."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can send notifications.")
 
     new_notification = models.Notification(
         user_id=notification_data.user_id,

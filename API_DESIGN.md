@@ -1,16 +1,18 @@
-# API Design for Generic Task Management Platform
+# Atlas API Design
 
-This document outlines the API design for a generic task management platform, inspired by the visual layout and user flow of the Adpulse Capture application. The goal is to create a functional backend that supports the observed UI elements and interactions, while maintaining a generic and distinct implementation.
+This document describes the supported application API. All protected endpoints require an `Authorization: Bearer <access_token>` header. The API does not use OTP verification or email-based login challenges.
 
 ## 1. Authentication API
 
-**Purpose:** Handles user registration, login, and session management.
+**Purpose:** Handles password registration, login, short-lived access tokens, and revocable refresh sessions.
 
 | Endpoint | Method | Description | Request Body | Response Body | Notes |
 |---|---|---|---|---|---|
-| `/auth/login` | `POST` | Initiates login process by sending an OTP to the provided email. | `{"email": "user@example.com"}` | `{"message": "OTP sent to email"}` | |
-| `/auth/verify` | `POST` | Verifies the OTP and logs in the user, returning an access token. | `{"email": "user@example.com", "otp": "123456"}` | `{"access_token": "<jwt_token>", "token_type": "bearer"}` | |
-| `/auth/me` | `GET` | Retrieves current user's profile information. | None | `{"id": 1, "email": "user@example.com", "first_name": "John", "last_name": "Doe"}` | Requires authentication |
+| `/auth/register/final` | `POST` | Creates a password-based account. | `{"username":"jane_doe","password":"long-password","phone_number":"2547...","email":"jane@example.com"}` | `{"message":"Registration successful"}` | Username and email are unique; password must be 8–72 UTF-8 bytes. |
+| `/auth/login` | `POST` | Authenticates by username or email and password. | `{"username":"jane_doe","password":"long-password"}` | `{"access_token":"...","refresh_token":"...","token_type":"bearer","access_token_expires_in":3600}` | Returns `401` for invalid credentials and `403` for suspended accounts. |
+| `/auth/refresh` | `POST` | Rotates a valid, unrevoked refresh session. | `{"refresh_token":"..."}` | Same token pair as login | The prior refresh token is revoked atomically. |
+| `/auth/logout` | `POST` | Revokes a refresh session. | `{"refresh_token":"..."}` | `{"message":"Logged out successfully"}` | Idempotent for expired or invalid local sessions. |
+| `/auth/me` | `GET` | Retrieves the authenticated user's profile and role fields. | None | `{"id":1,"username":"jane_doe","role":"user",...}` | Requires bearer authentication. |
 
 ## 2. Dashboard API
 

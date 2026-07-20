@@ -4,7 +4,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask, Certification, Payment, Plan, ReferralCode, ReferralRelationship
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_admin_user
 from pydantic import BaseModel
 import cloudinary
 import cloudinary.uploader
@@ -118,11 +118,6 @@ class ReferralRelationshipUpdate(BaseModel):
 # --- Router & Dependencies ---
 
 router = APIRouter()
-
-async def get_current_admin_user(current_user: User = Depends(get_current_user)):
-    if current_user.role != "admin" and not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
-    return current_user
 
 # --- Endpoints ---
 
@@ -374,74 +369,26 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_async_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_admin_user),
 ):
-    from sqlalchemy.exc import IntegrityError
-    from app.models.models import ReferralRelationship, ReferralCode, Payment, UserCertification, UserVideoTask, WithdrawalAccount, UserPlanHistory
-    
+    if current_user.id == user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Administrators cannot delete their own account from this endpoint")
+
     result = await db.execute(select(User).filter(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     try:
-        # Comprehensive manual cleanup to bypass potential missing DB cascades
-        # 1. Referral relationships
-        await db.execute(text("DELETE FROM referral_relationships WHERE user_id = :uid OR referrer_id = :uid"), {"uid": user_id})
-        # 2. Referral codes
-        await db.execute(text("DELETE FROM referral_codes WHERE user_id = :uid"), {"uid": user_id})
-        # 3. Payments
-        await db.execute(text("DELETE FROM payments WHERE user_id = :uid"), {"uid": user_id})
-        # 4. Certifications
-        await db.execute(text("DELETE FROM user_certifications WHERE user_id = :uid"), {"uid": user_id})
-        # 5. Video Tasks
-        await db.execute(text("DELETE FROM user_video_tasks WHERE user_id = :uid"), {"uid": user_id})
-        # 6. Withdrawal Accounts
-        await db.execute(text("DELETE FROM withdrawal_accounts WHERE user_id = :uid"), {"uid": user_id})
-        # 7. Plan History
-        await db.execute(text("DELETE FROM user_plan_history WHERE user_id = :uid"), {"uid": user_id})
-        # 8. Evaluations
-        await db.execute(text("DELETE FROM evaluations WHERE user_id = :uid"), {"uid": user_id})
-        # 9. Upgrade Refunds
-        await db.execute(text("DELETE FROM upgrade_refunds WHERE user_id = :uid"), {"uid": user_id})
-        # 10. Earnings Logs
-        await db.execute(text("DELETE FROM earnings_logs WHERE user_id = :uid"), {"uid": user_id})
-        # 11. Notifications
-        await db.execute(text("DELETE FROM notifications WHERE user_id = :uid"), {"uid": user_id})
-        # 12. OTPs
-        await db.execute(text("DELETE FROM otps WHERE email = :email"), {"email": user.email})
-        
-        # 13. Cascading delete for children: find all users referred by this user and delete them too
-        referred_users_query = await db.execute(text("SELECT user_id FROM referral_relationships WHERE referrer_id = :uid"), {"uid": user_id})
-        referred_user_ids = [row[0] for row in referred_users_query.fetchall()]
-        
-        for r_uid in referred_user_ids:
-            # Delete immediate children and their records
-            await db.execute(text("DELETE FROM referral_relationships WHERE user_id = :ruid OR referrer_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM referral_codes WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM payments WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM user_certifications WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM user_video_tasks WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM withdrawal_accounts WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM user_plan_history WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM evaluations WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM upgrade_refunds WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM earnings_logs WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM notifications WHERE user_id = :ruid"), {"ruid": r_uid})
-            await db.execute(text("DELETE FROM users WHERE id = :ruid"), {"ruid": r_uid})
-        
+        # The schema’s foreign keys are responsible for deleting only the
+        # target user's dependent records. Referral relationships are removed,
+        # but referred users are never deleted as an unintended side effect.
         await db.delete(user)
         await db.commit()
-        return {"message": "User, all related records, and all referred children deleted successfully"}
-    except IntegrityError as e:
+        return {"message": "User deleted successfully"}
+    except Exception:
         await db.rollback()
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Cannot delete user: They have active dependencies (e.g., payments or referrals). Error: {str(e.orig)}"
-        )
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User could not be deleted because of an active dependency")
 
 # Payments
 @router.get("/admin/payments")

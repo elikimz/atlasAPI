@@ -231,27 +231,15 @@ async def initiate_stk_push(
         }
 
 
-async def get_payment_status(reference: str) -> dict:
-    """
-    Check the status of a PesaFlux transaction by its reference.
-
-    Args:
-        reference: The unique payment reference
-
-    Returns:
-        dict with keys:
-            success (bool)
-            status (str): "completed" | "failed" | "pending"
-            mpesa_receipt (str|None)
-            error (str|None)
-    """
+async def get_payment_status(transaction_request_id: str) -> dict:
+    """Check a PesaFlux transaction using its documented request identifier."""
     if not settings.PESAFLUX_API_KEY or not settings.PESAFLUX_EMAIL:
-        return {"success": False, "status": "pending", "error": "Config missing"}
+        return {"success": False, "status": "pending", "error": "Provider configuration is unavailable"}
 
     payload = {
         "api_key": settings.PESAFLUX_API_KEY,
         "email": settings.PESAFLUX_EMAIL,
-        "reference": reference
+        "transaction_request_id": transaction_request_id,
     }
 
     try:
@@ -259,30 +247,31 @@ async def get_payment_status(reference: str) -> dict:
             response = await client.post(
                 PESAFLUX_STATUS_URL,
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
-
         if response.status_code != 200:
+            logger.warning("PesaFlux status check returned HTTP %s", response.status_code)
             return {"success": False, "status": "pending", "error": "Provider HTTP error"}
 
         data = response.json()
-        
-        # PesaFlux returns "Completed", "Failed", "Pending"
-        raw_status = data.get("TransactionStatus", data.get("ResponseDescription", "Pending")).lower()
-        
-        # Map to our internal status
-        final_status = "pending"
-        if raw_status == "completed" or raw_status == "success":
+        raw_status = str(data.get("TransactionStatus", data.get("ResponseDescription", "Pending"))).lower()
+        if raw_status in {"completed", "success"}:
             final_status = "completed"
-        elif raw_status == "failed" or "cancelled" in raw_status:
+        elif raw_status == "failed" or "cancelled" in raw_status or "expired" in raw_status:
             final_status = "failed"
+        else:
+            final_status = "pending"
 
         return {
             "success": True,
             "status": final_status,
-            "mpesa_receipt": data.get("TransactionReceipt") or data.get("TransactionID"),
-            "error": None
+            "mpesa_receipt": data.get("TransactionReceipt"),
+            "transaction_id": data.get("TransactionID"),
+            "transaction_reference": data.get("TransactionReference"),
+            "transaction_amount": data.get("TransactionAmount"),
+            "phone": data.get("Msisdn"),
+            "error": None,
         }
-    except Exception as e:
-        logger.error(f"PesaFlux status check error: {e}")
-        return {"success": False, "status": "pending", "error": str(e)}
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("PesaFlux status check failed: %s", exc)
+        return {"success": False, "status": "pending", "error": "Provider status check failed"}

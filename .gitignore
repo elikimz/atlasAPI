@@ -1,1 +1,26 @@
-app/**/__pycache__
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments and generated artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
