@@ -11,6 +11,7 @@ from app.database.database import get_async_db
 from app.models import models
 from app.routers.auth import get_current_user
 from app.schemas import AvailableTask, UserTaskCompletion, Certification as CertificationSchema
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
 
 router = APIRouter()
 
@@ -19,53 +20,77 @@ router = APIRouter()
 @router.get("/tasks/available")
 async def get_available_tasks(
     db: AsyncSession = Depends(get_async_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
 ):
-    query = select(models.VideoTask).outerjoin(
-        models.UserVideoTask,
-        (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
-    ).filter(
-        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
-    )
+    """Return a cached, user-scoped task queue with completed work excluded."""
+    async def load_available_tasks() -> list[dict]:
+        query = select(models.VideoTask).outerjoin(
+            models.UserVideoTask,
+            (models.UserVideoTask.video_task_id == models.VideoTask.id)
+            & (models.UserVideoTask.user_id == current_user.id),
+        ).filter(
+            (models.VideoTask.plan_id == current_user.current_plan_id)
+            | (models.UserVideoTask.id.is_not(None))
+        )
+        result = await db.execute(query)
+        visible_tasks = result.scalars().all()
 
-    result = await db.execute(query)
-    visible_tasks = result.scalars().all()
-
-    uvt_result = await db.execute(
-        select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
-    )
-    user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
-
-    response = []
-    for task in visible_tasks:
-        task_status = user_tasks.get(task.id, "available")
-        if task_status != "completed":
-            response.append({
+        uvt_result = await db.execute(
+            select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
+        )
+        user_tasks = {uvt.video_task_id: uvt.status for uvt in uvt_result.scalars().all()}
+        return [
+            {
                 "id": task.id,
                 "title": task.title,
                 "description": task.description,
                 "video_url": task.video_url,
                 "reward_amount": task.reward_amount,
-                "status": task_status
-            })
+                "status": user_tasks.get(task.id, "available"),
+            }
+            for task in visible_tasks
+            if user_tasks.get(task.id, "available") != "completed"
+        ]
 
-    return response
+    return await cache.get_or_set(
+        CacheKeys.user_available_tasks(current_user.id),
+        CacheTTL.TASKS,
+        load_available_tasks,
+    )
 
 
 @router.get("/tasks/all", response_model=List[AvailableTask])
 async def get_all_tasks(
     db: AsyncSession = Depends(get_async_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
 ):
-    """Return all video tasks for the user's plan or their assigned tasks."""
-    query = select(models.VideoTask).outerjoin(
-        models.UserVideoTask,
-        (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
-    ).filter(
-        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+    """Return all playable tasks using the same user-scoped cache namespace."""
+    async def load_all_tasks() -> list[dict]:
+        query = select(models.VideoTask).outerjoin(
+            models.UserVideoTask,
+            (models.UserVideoTask.video_task_id == models.VideoTask.id)
+            & (models.UserVideoTask.user_id == current_user.id),
+        ).filter(
+            (models.VideoTask.plan_id == current_user.current_plan_id)
+            | (models.UserVideoTask.id.is_not(None))
+        )
+        result = await db.execute(query)
+        return [
+            {
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "video_url": task.video_url,
+                "reward_amount": task.reward_amount,
+            }
+            for task in result.scalars().all()
+        ]
+
+    return await cache.get_or_set(
+        CacheKeys.user_all_tasks(current_user.id),
+        CacheTTL.TASKS,
+        load_all_tasks,
     )
-    result = await db.execute(query)
-    return result.scalars().all()
 
 
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
@@ -203,6 +228,7 @@ async def complete_task(
     )
     rel = rel_result.scalar_one_or_none()
     current_referrer_id = rel.referrer_id if rel else None
+    affected_referrer_ids: list[int] = []
 
     for field_name, flat_amount in rebate_config:
         if not current_referrer_id:
@@ -214,6 +240,7 @@ async def complete_task(
         referrer = referrer_result.scalar_one_or_none()
 
         if referrer:
+            affected_referrer_ids.append(referrer.id)
             # Credit rebate to referrer's withdrawal wallet (cashable earnings)
             referrer.withdrawal_wallet_balance = (
                 referrer.withdrawal_wallet_balance or 0.0
@@ -253,6 +280,13 @@ async def complete_task(
     await db.commit()
     await db.refresh(current_user)
     await db.refresh(user_video_task)
+
+    # Only invalidate after the transaction is durable. Each upline receives a
+    # wallet and referral-code change from the same completion event.
+    await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
+    for referrer_id in affected_referrer_ids:
+        await invalidate_user_cache(referrer_id, "dashboard", "referrals", "payments")
+    await invalidate_shared_cache("admin_stats")
 
     return {
         "message": "Task completed successfully. Earnings credited and referral rebates distributed.",
@@ -298,8 +332,7 @@ class LearningHubContent(BaseModel):
     training_videos: str
 
 
-@router.get("/dashboard/summary", response_model=DashboardSummary)
-async def get_dashboard_summary(
+async def _build_dashboard_summary(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
@@ -534,6 +567,19 @@ async def get_dashboard_summary(
             "bonus_refunded": 0.0,
             "pending_refund": 0.0,
         }
+
+
+@router.get("/dashboard/summary", response_model=DashboardSummary)
+async def get_dashboard_summary(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """Serve an aggregate dashboard response from a short-lived user cache."""
+    return await cache.get_or_set(
+        CacheKeys.user_dashboard(current_user.id),
+        CacheTTL.DASHBOARD,
+        lambda: _build_dashboard_summary(current_user=current_user, db=db),
+    )
 
 
 @router.get("/training/certifications", response_model=List[CertificationSchema])

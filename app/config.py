@@ -45,6 +45,14 @@ class Settings:
     PESAFLUX_EMAIL: str = os.getenv("APPSETTING_PESAFLUX_EMAIL", "") or os.getenv("PESAFLUX_EMAIL", "")
     PESAFLUX_USD_TO_KES_RATE: float = float(os.getenv("APPSETTING_PESAFLUX_USD_TO_KES_RATE", "130") or os.getenv("PESAFLUX_USD_TO_KES_RATE", "130"))
 
+    # Redis is optional during local development and tests. Cache failures are
+    # designed to fall back to the database rather than fail API requests.
+    REDIS_URL: str | None = os.getenv("APPSETTING_REDIS_URL") or os.getenv("REDIS_URL")
+    CACHE_ENABLED: bool = (os.getenv("APPSETTING_CACHE_ENABLED", os.getenv("CACHE_ENABLED", "true")) or "true").lower() not in {"0", "false", "no", "off"}
+    CACHE_FALLBACK_MAX_ENTRIES: int = int(os.getenv("APPSETTING_CACHE_FALLBACK_MAX_ENTRIES", os.getenv("CACHE_FALLBACK_MAX_ENTRIES", "1000")) or "1000")
+    REDIS_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("APPSETTING_REDIS_CONNECT_TIMEOUT_SECONDS", os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", "1")) or "1")
+    REDIS_SOCKET_TIMEOUT_SECONDS: float = float(os.getenv("APPSETTING_REDIS_SOCKET_TIMEOUT_SECONDS", os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "1")) or "1")
+
     def validate_runtime_security(self) -> None:
         if not self.DATABASE_URL:
             logger.error("DATABASE_URL is not configured.")
@@ -65,6 +73,10 @@ class Settings:
         if not self.BACKEND_CORS_ORIGINS:
             logger.error("BACKEND_CORS_ORIGINS is not configured.")
             raise RuntimeError("BACKEND_CORS_ORIGINS must be configured.")
+        if self.CACHE_FALLBACK_MAX_ENTRIES <= 0:
+            raise RuntimeError("CACHE_FALLBACK_MAX_ENTRIES must be positive.")
+        if self.REDIS_CONNECT_TIMEOUT_SECONDS <= 0 or self.REDIS_SOCKET_TIMEOUT_SECONDS <= 0:
+            raise RuntimeError("Redis timeout settings must be positive.")
         if "*" in self.BACKEND_CORS_ORIGINS:
             logger.warning("BACKEND_CORS_ORIGINS contains '*', which is insecure for production.")
             # For debugging, we'll allow '*' for now, but it should be explicit in production.

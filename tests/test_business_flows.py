@@ -5,6 +5,8 @@ provider, user account, or production data is contacted.
 """
 
 from collections.abc import AsyncIterator
+import statistics
+from time import perf_counter
 
 import httpx
 import pytest
@@ -16,6 +18,7 @@ from app.database.database import get_async_db
 from app.main import app
 from app.models import models
 from app.routers.auth import get_password_hash
+from app.services.cache import cache
 
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -179,3 +182,48 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
         ("invite_commission", 5.0),
         ("task_rebate", 0.01),
     }
+
+
+@pytest.mark.anyio
+async def test_dashboard_cache_latency_benchmark(
+    client: AsyncClient, purchase_scenario: dict[str, models.User]
+) -> None:
+    """Compare cold dashboard aggregation reads with warm cached reads in isolation."""
+    headers = await login_header(client, purchase_scenario["purchaser"].username)
+
+    cold_samples_ms: list[float] = []
+    for _ in range(20):
+        await cache.reset_for_tests()
+        started = perf_counter()
+        response = await client.get("/dashboard/summary", headers=headers)
+        cold_samples_ms.append((perf_counter() - started) * 1000)
+        assert response.status_code == 200
+
+    await cache.reset_for_tests()
+    priming_response = await client.get("/dashboard/summary", headers=headers)
+    assert priming_response.status_code == 200
+    expected_payload = priming_response.json()
+
+    warm_samples_ms: list[float] = []
+    for _ in range(100):
+        started = perf_counter()
+        response = await client.get("/dashboard/summary", headers=headers)
+        warm_samples_ms.append((perf_counter() - started) * 1000)
+        assert response.status_code == 200
+        assert response.json() == expected_payload
+
+    cold_median = statistics.median(cold_samples_ms)
+    warm_median = statistics.median(warm_samples_ms)
+    improvement_pct = ((cold_median - warm_median) / cold_median) * 100 if cold_median else 0.0
+
+    print(
+        "CACHE_BENCHMARK "
+        f"endpoint=/dashboard/summary "
+        f"cold_median_ms={cold_median:.3f} "
+        f"warm_median_ms={warm_median:.3f} "
+        f"improvement_pct={improvement_pct:.1f}"
+    )
+
+    # Verify cache behavior without imposing a hardware-specific absolute latency budget.
+    assert warm_median < cold_median
+    await cache.reset_for_tests()

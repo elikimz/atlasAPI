@@ -35,3 +35,5 @@ passlib[bcrypt]
 pytest
 fpdf2==2.8.2
 httpx>=0.27.0  # PesaFlux async HTTP client (additive)
+redis>=5.2.0,<6.0.0  # async Redis cache client
+aiosqlite>=0.20.0  # isolated async SQLite test database

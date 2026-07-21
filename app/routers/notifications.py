@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, func, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ from datetime import datetime
 from app.database.database import get_async_db
 from app.models import models
 from app.routers.auth import get_current_admin_user, get_current_user
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_user_cache
 
 router = APIRouter()
 
@@ -37,17 +38,49 @@ class NotificationMarkRead(BaseModel):
 
 @router.get("/notifications", response_model=List[NotificationSchema])
 async def get_user_notifications(
+    response: Response,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """Fetch all notifications for the current user, including global ones."""
-    notifications_query = select(models.Notification).filter(
-        (models.Notification.user_id == current_user.id) | (models.Notification.user_id.is_(None))
-    ).order_by(desc(models.Notification.created_at))
-    
-    result = await db.execute(notifications_query)
-    notifications = result.scalars().all()
-    return notifications
+    """Fetch a user/global notification page through a 20-second cache."""
+    async def load_notification_page() -> dict:
+        filters = (models.Notification.user_id == current_user.id) | (models.Notification.user_id.is_(None))
+        total_result = await db.execute(select(func.count(models.Notification.id)).filter(filters))
+        total = total_result.scalar() or 0
+        result = await db.execute(
+            select(models.Notification)
+            .filter(filters)
+            .order_by(desc(models.Notification.created_at), desc(models.Notification.id))
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return {
+            "items": [
+                {
+                    "id": notification.id,
+                    "user_id": notification.user_id,
+                    "title": notification.title,
+                    "message": notification.message,
+                    "type": notification.type,
+                    "is_read": notification.is_read,
+                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                }
+                for notification in result.scalars().all()
+            ],
+            "total": total,
+        }
+
+    page_data = await cache.get_or_set(
+        CacheKeys.user_notifications(current_user.id, page, limit),
+        CacheTTL.NOTIFICATIONS,
+        load_notification_page,
+    )
+    response.headers["X-Total-Count"] = str(page_data["total"])
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Limit"] = str(limit)
+    return page_data["items"]
 
 @router.post("/notifications/mark-read", response_model=dict)
 async def mark_notifications_as_read(
@@ -69,6 +102,7 @@ async def mark_notifications_as_read(
             db.add(notification)
     
     await db.commit()
+    await invalidate_user_cache(current_user.id, "notifications")
     return {"message": "Notifications marked as read."}
 
 @router.delete("/notifications/{notification_id}", response_model=dict)
@@ -92,6 +126,10 @@ async def delete_notification(
     if notification.user_id == current_user.id or (notification.user_id is None and (current_user.role == "admin" or current_user.is_admin)):
         await db.execute(delete(models.Notification).filter(models.Notification.id == notification_id))
         await db.commit()
+        if notification.user_id is None:
+            await cache.delete_pattern("atlas:user:*:notifications:*")
+        else:
+            await invalidate_user_cache(notification.user_id, "notifications")
         return {"message": "Notification deleted successfully"}
     else:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this notification")
@@ -108,7 +146,8 @@ async def clear_all_notifications(
     query = delete(models.Notification).filter(models.Notification.user_id == current_user.id)
     await db.execute(query)
     await db.commit()
-    
+    await invalidate_user_cache(current_user.id, "notifications")
+
     return {"message": "All personal notifications cleared"}
 
 @router.post("/admin/notifications/send", response_model=NotificationSchema, status_code=status.HTTP_201_CREATED)
@@ -139,4 +178,8 @@ async def send_notification(
     db.add(new_notification)
     await db.commit()
     await db.refresh(new_notification)
+    if new_notification.user_id is None:
+        await cache.delete_pattern("atlas:user:*:notifications:*")
+    else:
+        await invalidate_user_cache(new_notification.user_id, "notifications")
     return new_notification

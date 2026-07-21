@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean, func
+from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey, Boolean, Index, func
 from sqlalchemy.orm import relationship
 from app.database.database import Base
 
@@ -75,6 +75,9 @@ class Certification(Base):
 
 class UserCertification(Base):
     __tablename__ = "user_certifications"
+    __table_args__ = (
+        Index("ix_user_certifications_user_status", "user_id", "status"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -96,6 +99,9 @@ class Task(Base):
 
 class ReferralCode(Base):
     __tablename__ = "referral_codes"
+    __table_args__ = (
+        Index("ix_referral_codes_user_id", "user_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -120,6 +126,9 @@ class ReferralCode(Base):
 
 class ReferralRelationship(Base):
     __tablename__ = "referral_relationships"
+    __table_args__ = (
+        Index("ix_referral_relationships_referrer_id", "referrer_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True)
@@ -132,6 +141,9 @@ class ReferralRelationship(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        Index("ix_payments_user_created_at", "user_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -163,6 +175,9 @@ class Evaluation(Base):
 
 class VideoTask(Base):
     __tablename__ = "video_tasks"
+    __table_args__ = (
+        Index("ix_video_tasks_plan_id", "plan_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     plan_id = Column(Integer, ForeignKey("plans.id", ondelete="CASCADE"), nullable=True)
@@ -176,6 +191,10 @@ class VideoTask(Base):
 
 class UserVideoTask(Base):
     __tablename__ = "user_video_tasks"
+    __table_args__ = (
+        Index("ix_user_video_tasks_user_status_completed", "user_id", "status", "completed_at"),
+        Index("ix_user_video_tasks_user_video_task", "user_id", "video_task_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -200,6 +219,9 @@ class Plan(Base):
 
 class UserPlanHistory(Base):
     __tablename__ = "user_plan_history"
+    __table_args__ = (
+        Index("ix_user_plan_history_user_status_expiry", "user_id", "status", "expires_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -218,6 +240,9 @@ class UserPlanHistory(Base):
 
 class WithdrawalAccount(Base):
     __tablename__ = "withdrawal_accounts"
+    __table_args__ = (
+        Index("ix_withdrawal_accounts_user_primary", "user_id", "is_primary"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -239,6 +264,9 @@ class UpgradeRefund(Base):
     credited immediately to the withdrawal_wallet_balance.
     """
     __tablename__ = "upgrade_refunds"
+    __table_args__ = (
+        Index("ix_upgrade_refunds_user_status_created", "user_id", "status", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -268,6 +296,9 @@ class EarningsLog(Base):
     Excluded: direct recharges/deposits.
     """
     __tablename__ = "earnings_logs"
+    __table_args__ = (
+        Index("ix_earnings_logs_user_created_at", "user_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -281,6 +312,9 @@ class EarningsLog(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_created_at", "user_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True) # Null means global notification

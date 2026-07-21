@@ -11,6 +11,7 @@ import cloudinary.uploader
 import os
 from datetime import datetime
 from app.config import settings
+from app.services.cache import CacheKeys, CacheTTL, cache
 
 # Configure Cloudinary
 cloudinary.config(
@@ -124,19 +125,26 @@ router = APIRouter()
 @router.get("/admin/stats")
 async def get_admin_stats(
     db: AsyncSession = Depends(get_async_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_admin_user),
 ):
-    users_count = await db.execute(select(func.count(User.id)))
-    pending_payments = await db.execute(select(func.count(Payment.id)).filter(Payment.status == "pending"))
-    total_payouts = await db.execute(select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "payout"))
-    total_deposits = await db.execute(select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "deposit"))
-    
-    return {
-        "total_users": users_count.scalar(),
-        "pending_payments": pending_payments.scalar(),
-        "total_payouts": total_payouts.scalar() or 0.0,
-        "total_deposits": total_deposits.scalar() or 0.0
-    }
+    """Serve the high-frequency aggregate admin dashboard from a short TTL cache."""
+    async def load_admin_stats() -> dict:
+        users_count = await db.execute(select(func.count(User.id)))
+        pending_payments = await db.execute(select(func.count(Payment.id)).filter(Payment.status == "pending"))
+        total_payouts = await db.execute(
+            select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "payout")
+        )
+        total_deposits = await db.execute(
+            select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "deposit")
+        )
+        return {
+            "total_users": users_count.scalar() or 0,
+            "pending_payments": pending_payments.scalar() or 0,
+            "total_payouts": total_payouts.scalar() or 0.0,
+            "total_deposits": total_deposits.scalar() or 0.0,
+        }
+
+    return await cache.get_or_set(CacheKeys.admin_stats(), CacheTTL.ADMIN_STATS, load_admin_stats)
 
 # Video Tasks
 @router.post("/admin/video-tasks")

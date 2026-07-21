@@ -8,6 +8,7 @@ from app.database.database import get_async_db
 from app.models import models
 from app.schemas import plan as plan_schemas
 from app.routers.auth import get_current_user as get_current_active_user
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
 
 router = APIRouter(
     prefix="/plans",
@@ -39,9 +40,24 @@ def _plan_is_expired(user: models.User) -> bool:
 
 @router.get("", response_model=list[plan_schemas.Plan])
 async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.Plan).where(models.Plan.is_active == True))  # noqa: E712
-    plans = result.scalars().all()
-    return plans
+    """Return the shared active-plan catalog from a 30-minute cache."""
+    async def load_active_plans() -> list[dict]:
+        result = await db.execute(select(models.Plan).where(models.Plan.is_active.is_(True)))
+        return [
+            {
+                "id": plan.id,
+                "name": plan.name,
+                "price": plan.price,
+                "daily_tasks_limit": plan.daily_tasks_limit,
+                "validity_days": plan.validity_days,
+                "description": plan.description,
+                "is_active": plan.is_active,
+                "is_upgrade_only": plan.is_upgrade_only,
+            }
+            for plan in result.scalars().all()
+        ]
+
+    return await cache.get_or_set(CacheKeys.plans(), CacheTTL.PLANS, load_active_plans)
 
 
 @router.post("/purchase/{plan_id}")
@@ -126,6 +142,7 @@ async def purchase_plan(
         )
         rel = rel_result.scalar_one_or_none()
         current_upline_id = rel.referrer_id if rel else None
+        affected_upline_ids: list[int] = []
 
         for field_name, percentage in commission_config:
             if not current_upline_id:
@@ -137,6 +154,7 @@ async def purchase_plan(
             upline = upline_result.scalar_one_or_none()
 
             if upline:
+                affected_upline_ids.append(upline.id)
                 commission_amount = plan.price * percentage
                 # Credit commission to upline's withdrawal wallet (cashable earnings)
                 upline.withdrawal_wallet_balance = (upline.withdrawal_wallet_balance or 0.0) + commission_amount
@@ -194,6 +212,13 @@ async def purchase_plan(
 
     await db.commit()
     await db.refresh(user_plan_history)
+
+    # A purchase changes the buyer's wallet, current plan, task assignment, and
+    # potentially the wallet/referral aggregates of each upline.
+    await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
+    for upline_id in locals().get("affected_upline_ids", []):
+        await invalidate_user_cache(upline_id, "dashboard", "referrals", "payments")
+    await invalidate_shared_cache("admin_stats")
 
     # Return user plan history along with updated user balances
     user_result = await db.execute(
@@ -369,6 +394,9 @@ async def upgrade_plan(
     await db.commit()
     await db.refresh(new_user_plan_history)
 
+    await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
+    await invalidate_shared_cache("admin_stats")
+
     # Return user plan history along with updated user balances
     user_result = await db.execute(
         select(models.User)
@@ -426,6 +454,8 @@ async def release_pending_refunds(
     if released_total > 0:
         db.add(current_user)
         await db.commit()
+        await invalidate_user_cache(current_user.id, "dashboard", "payments", "referrals")
+        await invalidate_shared_cache("admin_stats")
 
     return {
         "message": f"Released {len(pending_refunds)} legacy refunds totaling ${released_total:.2f}",

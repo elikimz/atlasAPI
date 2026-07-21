@@ -9,6 +9,7 @@ from app.config import settings
 from app.database.database import AsyncSessionLocal, engine, Base
 from app.models import models
 from app.routers import admin, auth, core, extra, notifications, plans, pesaflux
+from app.services.cache import cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,6 +143,7 @@ async def lifespan(_: FastAPI):
     await _ensure_schema()
     await seed_data()
     yield
+    await cache.close()
     await engine.dispose()
 
 

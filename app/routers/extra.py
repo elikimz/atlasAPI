@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from hmac import compare_digest
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
@@ -9,6 +9,7 @@ from app.database.database import get_async_db
 from app.routers.auth import get_current_admin_user, get_current_user, get_password_hash, verify_password
 from app.models import models
 from app.config import settings
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
 
 router = APIRouter()
 
@@ -66,75 +67,62 @@ class InvitedUser(BaseModel):
 @router.get("/referrals/summary", response_model=ReferralSummary)
 async def get_referral_summary(
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    try:
-        result = await db.execute(
-            select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
-        )
-        codes = result.scalars().all()
-        
-        total_earnings = sum(getattr(c, "earned_amount", 0.0) or 0.0 for c in codes)
-        total_signups = sum(getattr(c, "signups_count", 0) or 0 for c in codes)
-        total_task_rebate = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in codes)
-        
-        t_a_invite = sum(getattr(c, "tier_a_invite_earnings", 0.0) or 0.0 for c in codes)
-        t_b_invite = sum(getattr(c, "tier_b_invite_earnings", 0.0) or 0.0 for c in codes)
-        t_c_invite = sum(getattr(c, "tier_c_invite_earnings", 0.0) or 0.0 for c in codes)
-        
-        t_a_rebate = sum(getattr(c, "tier_a_task_rebate", 0.0) or 0.0 for c in codes)
-        t_b_rebate = sum(getattr(c, "tier_b_task_rebate", 0.0) or 0.0 for c in codes)
-        t_c_rebate = sum(getattr(c, "tier_c_task_rebate", 0.0) or 0.0 for c in codes)
-        
-        # Calculate active invites (users who have an active plan)
-        # We need to find all users referred by this user's codes
-        active_invites_count = 0
-        total_invites_count = 0
-        
-        # 1. Get all users who used this user's referral codes
-        # First, find the user's ID to check ReferralRelationship
-        result = await db.execute(
-            select(models.User.id)
-            .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-            .filter(models.ReferralRelationship.referrer_id == current_user.id)
-        )
-        tier_a_ids = [row[0] for row in result.all()]
-        total_invites_count = len(tier_a_ids)
-        
-        if tier_a_ids:
-            # Count how many of these users have a current_plan_id > 1 (assuming 1 is free/none)
-            # Actually, check if they have any current_plan_id assigned
-            active_result = await db.execute(
+    """Serve a user-scoped referral summary from the five-minute cache."""
+    async def load_referral_summary() -> dict:
+        try:
+            result = await db.execute(
+                select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+            )
+            codes = result.scalars().all()
+            total_invites_result = await db.execute(
                 select(func.count(models.User.id))
+                .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
+                .filter(models.ReferralRelationship.referrer_id == current_user.id)
+            )
+            active_invites_result = await db.execute(
+                select(func.count(models.User.id))
+                .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
                 .filter(
-                    models.User.id.in_(tier_a_ids),
-                    models.User.current_plan_id.isnot(None)
+                    models.ReferralRelationship.referrer_id == current_user.id,
+                    models.User.current_plan_id.is_not(None),
                 )
             )
-            active_invites_count = active_result.scalar() or 0
+            return {
+                "earnings": sum((code.earned_amount or 0.0) for code in codes),
+                "users_referred": sum((code.signups_count or 0) for code in codes),
+                "task_rebate": sum((code.task_rebate_amount or 0.0) for code in codes),
+                "total_invites": total_invites_result.scalar() or 0,
+                "active_invites": active_invites_result.scalar() or 0,
+                "tier_a_invite_earnings": sum((code.tier_a_invite_earnings or 0.0) for code in codes),
+                "tier_b_invite_earnings": sum((code.tier_b_invite_earnings or 0.0) for code in codes),
+                "tier_c_invite_earnings": sum((code.tier_c_invite_earnings or 0.0) for code in codes),
+                "tier_a_task_rebate": sum((code.tier_a_task_rebate or 0.0) for code in codes),
+                "tier_b_task_rebate": sum((code.tier_b_task_rebate or 0.0) for code in codes),
+                "tier_c_task_rebate": sum((code.tier_c_task_rebate or 0.0) for code in codes),
+            }
+        except Exception as exc:
+            print(f"Safe Referral Summary Error: {exc}")
+            return {
+                "earnings": 0.0,
+                "users_referred": 0,
+                "task_rebate": 0.0,
+                "total_invites": 0,
+                "active_invites": 0,
+                "tier_a_invite_earnings": 0.0,
+                "tier_b_invite_earnings": 0.0,
+                "tier_c_invite_earnings": 0.0,
+                "tier_a_task_rebate": 0.0,
+                "tier_b_task_rebate": 0.0,
+                "tier_c_task_rebate": 0.0,
+            }
 
-        return {
-            "earnings": total_earnings,
-            "users_referred": total_signups,
-            "task_rebate": total_task_rebate,
-            "total_invites": total_invites_count,
-            "active_invites": active_invites_count,
-            "tier_a_invite_earnings": t_a_invite,
-            "tier_b_invite_earnings": t_b_invite,
-            "tier_c_invite_earnings": t_c_invite,
-            "tier_a_task_rebate": t_a_rebate,
-            "tier_b_task_rebate": t_b_rebate,
-            "tier_c_task_rebate": t_c_rebate
-        }
-    except Exception as e:
-        print(f"Safe Referral Summary Error: {e}")
-        return {
-            "earnings": 0.0, 
-            "users_referred": 0, 
-            "task_rebate": 0.0,
-            "total_invites": 0,
-            "active_invites": 0
-        }
+    return await cache.get_or_set(
+        CacheKeys.user_referral_summary(current_user.id),
+        CacheTTL.REFERRALS,
+        load_referral_summary,
+    )
 
 @router.get("/referrals/active", response_model=List[InvitedUser])
 async def get_active_referrals(
@@ -221,32 +209,43 @@ async def get_active_referrals(
 @router.get("/referrals/codes", response_model=List[ReferralCodeSchema])
 async def get_referral_codes(
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    try:
-        result = await db.execute(
-            select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
-        )
-        codes = result.scalars().all()
-        
-        # If no code record exists but user has a referral_code in the users table, create it
-        if not codes and current_user.referral_code:
-            new_code = models.ReferralCode(user_id=current_user.id, code=current_user.referral_code)
-            db.add(new_code)
-            await db.commit()
-            await db.refresh(new_code)
-            codes = [new_code]
-            
-        return [{
-            "code": c.code, 
-            "signups": getattr(c, "signups_count", 0) or 0, 
-            "trained": getattr(c, "trained_count", 0) or 0, 
-            "earned": getattr(c, "earned_amount", 0.0) or 0.0,
-            "task_rebate": getattr(c, "task_rebate_amount", 0.0) or 0.0
-        } for c in codes]
-    except Exception as e:
-        print(f"Safe Referral Codes Error: {e}")
-        return []
+    async def load_referral_codes() -> list[dict]:
+        try:
+            result = await db.execute(
+                select(models.ReferralCode).filter(models.ReferralCode.user_id == current_user.id)
+            )
+            codes = result.scalars().all()
+
+            # Maintain the legacy lazily-created code behavior, then cache the
+            # resulting representation only after the creation commit succeeds.
+            if not codes and current_user.referral_code:
+                new_code = models.ReferralCode(user_id=current_user.id, code=current_user.referral_code)
+                db.add(new_code)
+                await db.commit()
+                await db.refresh(new_code)
+                codes = [new_code]
+
+            return [
+                {
+                    "code": code.code,
+                    "signups": getattr(code, "signups_count", 0) or 0,
+                    "trained": getattr(code, "trained_count", 0) or 0,
+                    "earned": getattr(code, "earned_amount", 0.0) or 0.0,
+                    "task_rebate": getattr(code, "task_rebate_amount", 0.0) or 0.0,
+                }
+                for code in codes
+            ]
+        except Exception as exc:
+            print(f"Safe Referral Codes Error: {exc}")
+            return []
+
+    return await cache.get_or_set(
+        CacheKeys.user_referral_codes(current_user.id),
+        CacheTTL.REFERRALS,
+        load_referral_codes,
+    )
 
 @router.post("/referrals/codes", response_model=ReferralCodeSchema)
 async def create_referral_code(
@@ -263,7 +262,8 @@ async def create_referral_code(
     db.add(new_code)
     await db.commit()
     await db.refresh(new_code)
-    
+    await invalidate_user_cache(current_user.id, "referrals", "dashboard")
+
     return {
         "code": new_code.code,
         "signups": 0,
@@ -306,43 +306,80 @@ class DepositRequestSchema(BaseModel):
 @router.get("/payments/overview", response_model=PaymentOverview)
 async def get_payment_overview(
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    result = await db.execute(
-        select(models.Payment).filter(models.Payment.user_id == current_user.id)
+    async def load_payment_overview() -> dict:
+        result = await db.execute(
+            select(models.Payment).filter(models.Payment.user_id == current_user.id)
+        )
+        payments = result.scalars().all()
+        return {
+            "total_paid": sum(payment.amount for payment in payments if payment.status == "paid"),
+            "previous_unpaid": 0.0,
+            "current_pending": sum(payment.amount for payment in payments if payment.status == "pending"),
+        }
+
+    return await cache.get_or_set(
+        CacheKeys.user_payment_overview(current_user.id),
+        CacheTTL.PAYMENTS,
+        load_payment_overview,
     )
-    payments = result.scalars().all()
-    
-    total_paid = sum(p.amount for p in payments if p.status == "paid")
-    pending = sum(p.amount for p in payments if p.status == "pending")
-    
-    return {
-        "total_paid": total_paid,
-        "previous_unpaid": 0.0,
-        "current_pending": pending
-    }
+
 
 @router.get("/payments/history", response_model=List[PaymentHistorySchema])
 async def get_payment_history(
+    response: Response,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
     current_user: models.User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_async_db),
 ):
-    result = await db.execute(
-        select(models.Payment).filter(models.Payment.user_id == current_user.id).order_by(models.Payment.created_at.desc())
+    """Return a bounded history page without breaking existing array consumers.
+
+    Pagination metadata is exposed as response headers so legacy frontend code
+    continues to consume an array while new clients can build page controls.
+    """
+    async def load_payment_page() -> dict:
+        total_result = await db.execute(
+            select(func.count(models.Payment.id)).filter(models.Payment.user_id == current_user.id)
+        )
+        total = total_result.scalar() or 0
+        result = await db.execute(
+            select(models.Payment)
+            .filter(models.Payment.user_id == current_user.id)
+            .order_by(models.Payment.created_at.desc(), models.Payment.id.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        return {
+            "items": [
+                {
+                    "id": payment.id,
+                    "period": payment.period,
+                    "amount": payment.amount,
+                    "status": payment.status,
+                    "type": payment.type,
+                    "payment_method": payment.payment_method,
+                    "network": payment.network,
+                    "proof_url": payment.proof_url,
+                    "admin_notes": payment.admin_notes,
+                    "created_at": payment.created_at.isoformat() if payment.created_at else None,
+                }
+                for payment in result.scalars().all()
+            ],
+            "total": total,
+        }
+
+    page_data = await cache.get_or_set(
+        CacheKeys.user_payments(current_user.id, page, limit),
+        CacheTTL.PAYMENTS,
+        load_payment_page,
     )
-    payments = result.scalars().all()
-    return [{
-        "id": p.id,
-        "period": p.period,
-        "amount": p.amount,
-        "status": p.status,
-        "type": p.type,
-        "payment_method": p.payment_method,
-        "network": p.network,
-        "proof_url": p.proof_url,
-        "admin_notes": p.admin_notes,
-        "created_at": p.created_at.isoformat() if p.created_at else None
-    } for p in payments]
+    response.headers["X-Total-Count"] = str(page_data["total"])
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Limit"] = str(limit)
+    response.headers["X-Has-More"] = str(page * limit < page_data["total"]).lower()
+    return page_data["items"]
 
 @router.post("/payments/method", response_model=dict)
 async def update_payment_method(
@@ -372,6 +409,8 @@ async def create_deposit_request(
         db.add(new_payment)
         await db.commit()
         await db.refresh(new_payment)
+        await invalidate_user_cache(current_user.id, "payments", "dashboard")
+        await invalidate_shared_cache("admin_stats")
         return {
             "id": new_payment.id,
             "status": new_payment.status,
@@ -463,6 +502,7 @@ async def add_withdrawal_account(
     db.add(new_account)
     await db.commit()
     await db.refresh(new_account)
+    await invalidate_user_cache(current_user.id, "all")
     return new_account
 
 # --- Withdrawal Workflow ---
@@ -498,6 +538,7 @@ async def update_withdrawal_password(
 
     current_user.withdrawal_password = get_password_hash(data.new_password)
     await db.commit()
+    await invalidate_user_cache(current_user.id, "all")
     return {"message": "Withdrawal password updated successfully"}
 
 @router.post("/payments/withdraw", response_model=dict)
@@ -547,7 +588,9 @@ async def request_withdrawal(
         
         db.add(new_payment)
         await db.commit()
-        
+        await invalidate_user_cache(current_user.id, "payments", "dashboard")
+        await invalidate_shared_cache("admin_stats")
+
         return {
             "message": "Withdrawal submitted successfully. Your funds are being processed.",
             "payment_id": new_payment.id
@@ -586,24 +629,20 @@ async def get_profile(current_user: models.User = Depends(get_current_user)):
 
 @router.get("/settings/config", response_model=List[AppConfigSchema])
 async def get_app_config(db: AsyncSession = Depends(get_async_db)):
-    result = await db.execute(select(models.AppConfig))
-    configs = result.scalars().all()
-    
-    # Ensure default keys exist if not in DB
-    default_keys = {
-        "telegram_link": "https://t.me/AdPulseAI",
-        "whatsapp_number": "+1234567890",
-        "support_ticket_url": "https://help.adpulseai.com"
-    }
-    
-    config_map = {c.key: c.value for c in configs}
-    response = []
-    for key, default_value in default_keys.items():
-        response.append({
-            "key": key,
-            "value": config_map.get(key, default_value)
-        })
-    return response
+    async def load_app_config() -> list[dict]:
+        result = await db.execute(select(models.AppConfig))
+        config_map = {config.key: config.value for config in result.scalars().all()}
+        default_keys = {
+            "telegram_link": "https://t.me/AdPulseAI",
+            "whatsapp_number": "+1234567890",
+            "support_ticket_url": "https://help.adpulseai.com",
+        }
+        return [
+            {"key": key, "value": config_map.get(key, default_value)}
+            for key, default_value in default_keys.items()
+        ]
+
+    return await cache.get_or_set(CacheKeys.app_config(), CacheTTL.APP_CONFIG, load_app_config)
 
 @router.put("/admin/config", response_model=dict)
 async def update_app_config(
@@ -621,6 +660,7 @@ async def update_app_config(
         db.add(config)
     
     await db.commit()
+    await invalidate_shared_cache("app_config")
     return {"message": f"Configuration {config_data.key} updated successfully"}
 
 @router.put("/settings/profile", response_model=UserProfile)
@@ -636,6 +676,7 @@ async def update_profile(
     
     await db.commit()
     await db.refresh(current_user)
+    await invalidate_user_cache(current_user.id, "all")
     return {
         "username": current_user.username,
         "first_name": current_user.first_name,
@@ -652,4 +693,6 @@ async def delete_account(
 ):
     await db.delete(current_user)
     await db.commit()
+    await invalidate_user_cache(current_user.id, "all")
+    await invalidate_shared_cache("admin_stats")
     return {"message": "Account deleted successfully"}
