@@ -191,9 +191,11 @@ async def purchase_plan(
             else:
                 break
 
-    # Auto-assign tasks for the new plan
+    # Auto-assign tasks for the new plan.
+    # Include global tasks (plan_id IS NULL) AND tasks specific to the plan.
+    purchase_task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
     result_tasks = await db.execute(
-        select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id)
+        select(models.VideoTask).filter(purchase_task_filter)
     )
     plan_tasks = result_tasks.scalars().all()
     for task in plan_tasks:
@@ -379,17 +381,28 @@ async def upgrade_plan(
         )
     )
 
-    # Auto-assign tasks for the new upgraded plan
+    # Auto-assign tasks for the new upgraded plan.
+    # Include global tasks (plan_id IS NULL) AND tasks specific to the new plan.
+    # For non-Intern plans, users should see both global and plan-specific tasks.
+    task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == new_plan.id)
     result_tasks = await db.execute(
-        select(models.VideoTask).filter(models.VideoTask.plan_id == new_plan.id)
+        select(models.VideoTask).filter(task_filter)
     )
     plan_tasks = result_tasks.scalars().all()
     for task in plan_tasks:
-        db.add(models.UserVideoTask(
-            user_id=current_user.id,
-            video_task_id=task.id,
-            status="pending"
-        ))
+        # Check if user already has this task (e.g. a global task assigned previously)
+        existing_result = await db.execute(
+            select(models.UserVideoTask).filter(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.video_task_id == task.id,
+            )
+        )
+        if not existing_result.scalar_one_or_none():
+            db.add(models.UserVideoTask(
+                user_id=current_user.id,
+                video_task_id=task.id,
+                status="pending"
+            ))
 
     await db.commit()
     await db.refresh(new_user_plan_history)

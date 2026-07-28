@@ -566,9 +566,11 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                     )
                 )
 
-            # Auto-assign tasks for the new plan
+            # Auto-assign tasks for the new plan.
+            # Include global tasks (plan_id IS NULL) AND tasks specific to the new plan.
+            new_task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
             new_tasks_res = await db.execute(
-                select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id)
+                select(models.VideoTask).filter(new_task_filter)
             )
             for task in new_tasks_res.scalars().all():
                 existing_res = await db.execute(
