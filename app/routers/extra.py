@@ -580,7 +580,8 @@ async def request_withdrawal(
             type="payout",
             payment_method=f"{account.type.upper()} ({account.network})",
             network=account.network,
-            admin_notes=f"Withdrawal to {account.address}"
+            admin_notes=f"Withdrawal to {account.address}",
+            destination_number=account.address
         )
         
         # Deduct balance

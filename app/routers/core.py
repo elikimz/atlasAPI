@@ -24,13 +24,20 @@ async def get_available_tasks(
 ):
     """Return a cached, user-scoped task queue with completed work excluded."""
     async def load_available_tasks() -> list[dict]:
+        # Task Loading Logic:
+        # 1. If Intern (plan_id=1), show ONLY tasks where plan_id=1.
+        # 2. For other levels, show tasks where plan_id is NULL (global) OR plan_id matches their level.
+        if current_user.current_plan_id == 1:
+            task_filter = (models.VideoTask.plan_id == 1)
+        else:
+            task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == current_user.current_plan_id)
+
         query = select(models.VideoTask).outerjoin(
             models.UserVideoTask,
             (models.UserVideoTask.video_task_id == models.VideoTask.id)
             & (models.UserVideoTask.user_id == current_user.id),
         ).filter(
-            (models.VideoTask.plan_id == current_user.current_plan_id)
-            | (models.UserVideoTask.id.is_not(None))
+            task_filter | (models.UserVideoTask.id.is_not(None))
         )
         result = await db.execute(query)
         visible_tasks = result.scalars().all()
@@ -66,13 +73,18 @@ async def get_all_tasks(
 ):
     """Return all playable tasks using the same user-scoped cache namespace."""
     async def load_all_tasks() -> list[dict]:
+        # Task Loading Logic (All Tasks):
+        if current_user.current_plan_id == 1:
+            task_filter = (models.VideoTask.plan_id == 1)
+        else:
+            task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == current_user.current_plan_id)
+
         query = select(models.VideoTask).outerjoin(
             models.UserVideoTask,
             (models.UserVideoTask.video_task_id == models.VideoTask.id)
             & (models.UserVideoTask.user_id == current_user.id),
         ).filter(
-            (models.VideoTask.plan_id == current_user.current_plan_id)
-            | (models.UserVideoTask.id.is_not(None))
+            task_filter | (models.UserVideoTask.id.is_not(None))
         )
         result = await db.execute(query)
         return [

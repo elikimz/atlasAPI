@@ -420,6 +420,7 @@ async def get_all_payments(
             "network": p.network,
             "proof_url": p.proof_url,
             "admin_notes": p.admin_notes,
+            "destination_number": p.destination_number,
             "payout_date": p.payout_date.isoformat() if p.payout_date else None,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "user": {

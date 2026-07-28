@@ -155,6 +155,7 @@ class Payment(Base):
     network = Column(String, nullable=True)
     proof_url = Column(String, nullable=True)
     admin_notes = Column(String, nullable=True)
+    destination_number = Column(String, nullable=True)
     payout_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
