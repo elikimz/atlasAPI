@@ -137,13 +137,20 @@ async def complete_task(
         )
 
     # 2. Check Daily Task Limit
+    # Count only tasks completed today AND after the current plan was activated.
+    # This ensures that tasks completed on a previous (lower-tier) plan today do
+    # NOT count against the new plan's higher daily limit after an upgrade.
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    plan_start = _as_utc(current_user.plan_start_date) or today_start
+    # The effective window starts at whichever is later: today's midnight or plan activation time.
+    count_since = max(today_start, plan_start)
+
     daily_count_result = await db.execute(
         select(func.count(models.UserVideoTask.id))
         .filter(
             models.UserVideoTask.user_id == current_user.id,
             models.UserVideoTask.status == "completed",
-            models.UserVideoTask.completed_at >= today_start
+            models.UserVideoTask.completed_at >= count_since
         )
     )
     tasks_completed_today = daily_count_result.scalar() or 0
@@ -156,7 +163,7 @@ async def complete_task(
     if plan and tasks_completed_today >= plan.daily_tasks_limit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks)."
+            detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks). Upgrade to a higher plan to complete more tasks today."
         )
 
     # 3. Verify task belongs to user's plan

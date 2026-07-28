@@ -13,6 +13,7 @@ from app.models import models
 from app.models.pesaflux_payment import PesaFluxPayment
 from app.routers.auth import get_current_user
 from app.services import pesaflux_service
+from app.services.cache import invalidate_shared_cache, invalidate_user_cache
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -505,12 +506,29 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
             
             # Record old plan for history if upgrading
             old_plan_id = user.current_plan_id
+            now = _utc_now()
             
+            # Mark old plan history as upgraded (parity with /plans/upgrade endpoint)
+            if payment.payment_type == "upgrade" and old_plan_id:
+                old_history_res = await db.execute(
+                    select(models.UserPlanHistory)
+                    .filter(
+                        models.UserPlanHistory.user_id == user.id,
+                        models.UserPlanHistory.plan_id == old_plan_id,
+                        models.UserPlanHistory.status == "active",
+                    )
+                    .order_by(models.UserPlanHistory.purchased_at.desc())
+                )
+                old_history = old_history_res.scalars().first()
+                if old_history:
+                    old_history.status = "upgraded"
+                    db.add(old_history)
+
             # Update user plan
             user.current_plan_id = plan.id
             user.plan_purchase_price = plan.price
-            user.plan_start_date = _utc_now()
-            user.plan_expiry_date = _utc_now() + timedelta(days=plan.validity_days)
+            user.plan_start_date = now
+            user.plan_expiry_date = now + timedelta(days=plan.validity_days)
             user.has_purchased_first_package = True
             
             # For STK-based plan purchases/upgrades, the user pays directly via M-Pesa.
@@ -520,9 +538,52 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                 old_plan_res = await db.execute(select(models.Plan).filter(models.Plan.id == old_plan_id))
                 old_plan = old_plan_res.scalar_one_or_none()
                 if old_plan:
-                    user.withdrawal_wallet_balance = (user.withdrawal_wallet_balance or 0.0) + old_plan.price
-                    logger.info("User %s upgraded via STK: credited $%s old plan price to withdrawal", user.id, old_plan.price)
-            
+                    refund_amount = old_plan.price
+                    user.withdrawal_wallet_balance = (user.withdrawal_wallet_balance or 0.0) + refund_amount
+                    # Log the refund to EarningsLog for period tracking
+                    db.add(models.EarningsLog(
+                        user_id=user.id,
+                        amount=refund_amount,
+                        type="upgrade_refund",
+                        description="Immediate upgrade refund for previous plan (M-Pesa)"
+                    ))
+                    # Audit trail in upgrade_refunds table
+                    db.add(models.UpgradeRefund(
+                        user_id=user.id,
+                        amount=refund_amount,
+                        status="released",
+                        release_at=now,
+                        released_at=now,
+                    ))
+                    logger.info("User %s upgraded via STK: credited $%s old plan price to withdrawal", user.id, refund_amount)
+
+            # Clean up old plan's pending tasks (parity with /plans/upgrade endpoint)
+            if payment.payment_type == "upgrade" and old_plan_id:
+                await db.execute(
+                    models.UserVideoTask.__table__.delete().where(
+                        models.UserVideoTask.user_id == user.id,
+                        models.UserVideoTask.status == "pending",
+                    )
+                )
+
+            # Auto-assign tasks for the new plan
+            new_tasks_res = await db.execute(
+                select(models.VideoTask).filter(models.VideoTask.plan_id == plan.id)
+            )
+            for task in new_tasks_res.scalars().all():
+                existing_res = await db.execute(
+                    select(models.UserVideoTask).filter(
+                        models.UserVideoTask.user_id == user.id,
+                        models.UserVideoTask.video_task_id == task.id,
+                    )
+                )
+                if not existing_res.scalar_one_or_none():
+                    db.add(models.UserVideoTask(
+                        user_id=user.id,
+                        video_task_id=task.id,
+                        status="pending",
+                    ))
+
             # Add to UserPlanHistory
             history = models.UserPlanHistory(
                 user_id=user.id,
@@ -550,3 +611,8 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
     db.add(history_payment)
 
     await db.commit()
+
+    # Invalidate user cache so tasks, dashboard, and plan state refresh immediately
+    # after a successful M-Pesa payment (purchase, upgrade, or recharge).
+    await invalidate_user_cache(user.id, "tasks", "dashboard", "referrals", "payments")
+    await invalidate_shared_cache("admin_stats")
