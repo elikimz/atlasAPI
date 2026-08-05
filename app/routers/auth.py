@@ -321,6 +321,13 @@ async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_asy
             if existing_email.scalar_one_or_none():
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
+        if data.phone_number:
+            existing_phone = await db.execute(
+                select(models.User).filter(models.User.phone_number == data.phone_number)
+            )
+            if existing_phone.scalar_one_or_none():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone number already registered")
+
         user = models.User(
             username=username,
             password_hash=get_password_hash(data.password),
