@@ -635,7 +635,7 @@ async def get_app_config(db: AsyncSession = Depends(get_async_db)):
         config_map = {config.key: config.value for config in result.scalars().all()}
         default_keys = {
             "telegram_link": "https://t.me/AdPulseAI",
-            "whatsapp_number": "+1234567890",
+            "whatsapp_link": "https://chat.whatsapp.com/L1234567890",
             "support_ticket_url": "https://help.adpulseai.com",
         }
         return [
