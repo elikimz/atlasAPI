@@ -4,7 +4,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask, Certification, Payment, Plan, ReferralCode, ReferralRelationship
-from app.routers.auth import get_current_admin_user
+from app.routers.auth import get_current_admin_user, get_password_hash
 from pydantic import BaseModel
 import cloudinary
 import cloudinary.uploader
@@ -77,6 +77,7 @@ class UserUpdate(BaseModel):
     email: str | None = None
     phone_number: str | None = None
     role: str | None = None
+    password: str | None = None
     is_admin: bool | None = None
     is_suspended: bool | None = None
     is_trained: bool | None = None
@@ -366,7 +367,11 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    for field, value in user_data.dict(exclude_unset=True).items():
+    update_data = user_data.dict(exclude_unset=True)
+    if "password" in update_data and update_data["password"]:
+        user.password_hash = get_password_hash(update_data.pop("password"))
+    
+    for field, value in update_data.items():
         setattr(user, field, value)
     
     await db.commit()
