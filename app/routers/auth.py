@@ -410,4 +410,5 @@ async def read_users_me(current_user: models.User = Depends(get_current_user)) -
         "plan_start_date": current_user.plan_start_date.isoformat() if current_user.plan_start_date else None,
         "plan_expiry_date": current_user.plan_expiry_date.isoformat() if current_user.plan_expiry_date else None,
         "current_plan": current_plan,
+        "has_purchased_first_package": bool(current_user.has_purchased_first_package),
     }

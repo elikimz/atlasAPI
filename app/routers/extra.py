@@ -547,6 +547,14 @@ async def request_withdrawal(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
+    # Withdrawal eligibility requires a completed recharge-funded plan purchase.
+    # This is enforced server-side so it cannot be bypassed by changing the UI.
+    if not current_user.has_purchased_first_package or not current_user.current_plan_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Recharge your account and purchase a plan before requesting a withdrawal.",
+        )
+
     # 1. Verify the withdrawal password. Successful legacy plaintext checks are
     # immediately upgraded to bcrypt so users are not locked out during rollout.
     if not current_user.withdrawal_password or not _verify_withdrawal_password(withdrawal_data.password, current_user.withdrawal_password):
