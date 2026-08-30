@@ -22,6 +22,10 @@ cloudinary.config(
 
 # --- Schemas ---
 
+class BulkUserDeleteRequest(BaseModel):
+    user_ids: list[int] = []
+    delete_all: bool = False
+
 class VideoTaskCreate(BaseModel):
     title: str
     description: str
@@ -342,6 +346,33 @@ async def get_all_users(
             "created_at": u.created_at.isoformat() if u.created_at else None
         } for u in users
     ]
+
+@router.post("/admin/users/bulk-delete")
+async def bulk_delete_users(
+    request: BulkUserDeleteRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    if not request.delete_all and not request.user_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one user or choose delete all")
+
+    query = select(User).where(User.is_admin.is_(False), User.role != "admin")
+    if not request.delete_all:
+        query = query.where(User.id.in_(request.user_ids))
+
+    result = await db.execute(query)
+    users = result.scalars().all()
+    if not users:
+        return {"message": "No eligible users found", "deleted_count": 0}
+
+    try:
+        for user in users:
+            await db.delete(user)
+        await db.commit()
+        return {"message": f"{len(users)} user(s) deleted successfully", "deleted_count": len(users)}
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Some users could not be deleted because of an active dependency")
 
 @router.get("/admin/users/{user_id}")
 async def get_user_by_id(
