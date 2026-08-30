@@ -555,6 +555,19 @@ async def request_withdrawal(
             detail="Recharge your account and purchase a plan before requesting a withdrawal.",
         )
 
+    pending_result = await db.execute(
+        select(models.Payment.id).where(
+            models.Payment.user_id == current_user.id,
+            models.Payment.type == "payout",
+            models.Payment.status.in_(["pending", "processing", "in_progress"]),
+        ).limit(1)
+    )
+    if pending_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a withdrawal being processed. Wait until it is processed or canceled before requesting another withdrawal.",
+        )
+
     # 1. Verify the withdrawal password. Successful legacy plaintext checks are
     # immediately upgraded to bcrypt so users are not locked out during rollout.
     if not current_user.withdrawal_password or not _verify_withdrawal_password(withdrawal_data.password, current_user.withdrawal_password):
