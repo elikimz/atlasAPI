@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
+import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -15,6 +16,24 @@ from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cac
 
 router = APIRouter()
 
+
+def _is_intern_plan(plan: models.Plan | None) -> bool:
+    return bool(plan and plan.name.strip().lower() == "intern")
+
+
+def _is_weekday_only_plan(plan: models.Plan | None) -> bool:
+    return bool(plan and re.search(r"(?:lv|level)\s*([1-5])\b", plan.name.strip().lower()))
+
+
+def _tasks_available_today(plan: models.Plan | None) -> bool:
+    return not _is_weekday_only_plan(plan) or datetime.now(timezone.utc).weekday() < 6
+
+
+def _task_filter_for_plan(plan: models.Plan | None, plan_id: int | None):
+    if _is_intern_plan(plan):
+        return models.VideoTask.plan_id == plan_id
+    return (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan_id)
+
 # --- Task Endpoints ---
 
 @router.get("/tasks/available")
@@ -24,21 +43,17 @@ async def get_available_tasks(
 ):
     """Return a cached, user-scoped task queue with completed work excluded."""
     async def load_available_tasks() -> list[dict]:
-        # Task Loading Logic:
-        # 1. If Intern (plan_id=1), show ONLY tasks where plan_id=1.
-        # 2. For other levels, show tasks where plan_id is NULL (global) OR plan_id matches their level.
-        if current_user.current_plan_id == 1:
-            task_filter = (models.VideoTask.plan_id == 1)
-        else:
-            task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == current_user.current_plan_id)
+        plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
+        plan = plan_result.scalar_one_or_none()
+        if not _tasks_available_today(plan):
+            return []
+        task_filter = _task_filter_for_plan(plan, current_user.current_plan_id)
 
         query = select(models.VideoTask).outerjoin(
             models.UserVideoTask,
             (models.UserVideoTask.video_task_id == models.VideoTask.id)
             & (models.UserVideoTask.user_id == current_user.id),
-        ).filter(
-            task_filter | (models.UserVideoTask.id.is_not(None))
-        )
+        ).filter(task_filter)
         result = await db.execute(query)
         visible_tasks = result.scalars().all()
 
@@ -73,18 +88,18 @@ async def get_all_tasks(
 ):
     """Return all playable tasks using the same user-scoped cache namespace."""
     async def load_all_tasks() -> list[dict]:
-        # Task Loading Logic (All Tasks):
-        if current_user.current_plan_id == 1:
-            task_filter = (models.VideoTask.plan_id == 1)
-        else:
-            task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == current_user.current_plan_id)
+        plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
+        plan = plan_result.scalar_one_or_none()
+        if not _tasks_available_today(plan):
+            return []
+        task_filter = _task_filter_for_plan(plan, current_user.current_plan_id)
 
         query = select(models.VideoTask).outerjoin(
             models.UserVideoTask,
             (models.UserVideoTask.video_task_id == models.VideoTask.id)
             & (models.UserVideoTask.user_id == current_user.id),
         ).filter(
-            task_filter | (models.UserVideoTask.id.is_not(None))
+            task_filter
         )
         result = await db.execute(query)
         return [
@@ -160,6 +175,12 @@ async def complete_task(
     )
     plan = plan_result.scalar_one_or_none()
 
+    if not _tasks_available_today(plan):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tasks for Levels 1–5 are available Monday through Saturday only."
+        )
+
     if plan and tasks_completed_today >= plan.daily_tasks_limit:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -172,7 +193,7 @@ async def complete_task(
         (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
     ).filter(
         models.VideoTask.id == task_completion.video_task_id,
-        (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+        _task_filter_for_plan(plan, current_user.current_plan_id)
     )
 
     vt_result = await db.execute(query)

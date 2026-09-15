@@ -5,6 +5,9 @@ from typing import Optional
 class PlanBase(BaseModel):
     name: str
     price: float
+    daily_earnings: float = 0.0
+    total_return: float = 0.0
+    profit: float = 0.0
     daily_tasks_limit: int
     validity_days: int
     description: Optional[str] = None

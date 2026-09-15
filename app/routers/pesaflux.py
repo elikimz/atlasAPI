@@ -566,9 +566,8 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                     )
                 )
 
-            # Auto-assign tasks for the new plan.
-            # Include global tasks (plan_id IS NULL) AND tasks specific to the new plan.
-            new_task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
+            # Intern receives only Intern tasks; all other plans receive global and plan-specific tasks.
+            new_task_filter = (models.VideoTask.plan_id == plan.id) if plan.name.strip().lower() == "intern" else (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
             new_tasks_res = await db.execute(
                 select(models.VideoTask).filter(new_task_filter)
             )

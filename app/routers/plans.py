@@ -48,6 +48,9 @@ async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
                 "id": plan.id,
                 "name": plan.name,
                 "price": plan.price,
+                "daily_earnings": plan.daily_earnings,
+                "total_return": plan.total_return,
+                "profit": plan.profit,
                 "daily_tasks_limit": plan.daily_tasks_limit,
                 "validity_days": plan.validity_days,
                 "description": plan.description,
@@ -191,9 +194,8 @@ async def purchase_plan(
             else:
                 break
 
-    # Auto-assign tasks for the new plan.
-    # Include global tasks (plan_id IS NULL) AND tasks specific to the plan.
-    purchase_task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
+    # Intern receives only Intern tasks; all other plans receive global and plan-specific tasks.
+    purchase_task_filter = (models.VideoTask.plan_id == plan.id) if plan.name.strip().lower() == "intern" else (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
     result_tasks = await db.execute(
         select(models.VideoTask).filter(purchase_task_filter)
     )
@@ -381,10 +383,8 @@ async def upgrade_plan(
         )
     )
 
-    # Auto-assign tasks for the new upgraded plan.
-    # Include global tasks (plan_id IS NULL) AND tasks specific to the new plan.
-    # For non-Intern plans, users should see both global and plan-specific tasks.
-    task_filter = (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == new_plan.id)
+    # Intern receives only Intern tasks; all other plans receive global and plan-specific tasks.
+    task_filter = (models.VideoTask.plan_id == new_plan.id) if new_plan.name.strip().lower() == "intern" else (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == new_plan.id)
     result_tasks = await db.execute(
         select(models.VideoTask).filter(task_filter)
     )

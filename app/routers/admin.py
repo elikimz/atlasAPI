@@ -11,7 +11,7 @@ import cloudinary.uploader
 import os
 from datetime import datetime
 from app.config import settings
-from app.services.cache import CacheKeys, CacheTTL, cache
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache
 
 # Configure Cloudinary
 cloudinary.config(
@@ -43,6 +43,9 @@ class VideoTaskUpdate(BaseModel):
 class PlanCreate(BaseModel):
     name: str
     price: float
+    daily_earnings: float = 0.0
+    total_return: float = 0.0
+    profit: float = 0.0
     daily_tasks_limit: int
     validity_days: int
     description: str
@@ -52,6 +55,9 @@ class PlanCreate(BaseModel):
 class PlanUpdate(BaseModel):
     name: str | None = None
     price: float | None = None
+    daily_earnings: float | None = None
+    total_return: float | None = None
+    profit: float | None = None
     daily_tasks_limit: int | None = None
     validity_days: int | None = None
     description: str | None = None
@@ -625,6 +631,7 @@ async def update_plan(
     
     await db.commit()
     await db.refresh(plan)
+    await invalidate_shared_cache("plans")
     return plan
 
 @router.delete("/admin/plans/{plan_id}")
