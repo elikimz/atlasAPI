@@ -10,6 +10,15 @@ from app.routers.auth import get_current_admin_user, get_current_user, get_passw
 from app.models import models
 from app.config import settings
 from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
+from app.services.withdrawal_schedule import (
+    DEFAULT_WITHDRAWAL_SCHEDULE,
+    is_withdrawal_schedule_key,
+    normalize_schedule,
+    schedule_summary,
+    validate_schedule_value,
+    withdrawal_is_open,
+)
+from app.services.email import send_withdrawal_request_received_email
 
 router = APIRouter()
 
@@ -555,6 +564,18 @@ async def request_withdrawal(
             detail="Recharge your account and purchase a plan before requesting a withdrawal.",
         )
 
+    schedule_result = await db.execute(
+        select(models.AppConfig).where(models.AppConfig.key.in_(DEFAULT_WITHDRAWAL_SCHEDULE.keys()))
+    )
+    withdrawal_schedule = normalize_schedule({
+        config.key: config.value for config in schedule_result.scalars().all()
+    })
+    if not withdrawal_is_open(withdrawal_schedule):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Withdrawals are currently closed. {schedule_summary(withdrawal_schedule)}",
+        )
+
     pending_result = await db.execute(
         select(models.Payment.id).where(
             models.Payment.user_id == current_user.id,
@@ -612,6 +633,11 @@ async def request_withdrawal(
         await db.commit()
         await invalidate_user_cache(current_user.id, "payments", "dashboard")
         await invalidate_shared_cache("admin_stats")
+        await send_withdrawal_request_received_email(
+            recipient=current_user.email,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            amount=float(new_payment.amount or 0),
+        )
 
         return {
             "message": "Withdrawal submitted successfully. Your funds are being processed.",
@@ -658,6 +684,7 @@ async def get_app_config(db: AsyncSession = Depends(get_async_db)):
             "telegram_link": "https://t.me/AdPulseAI",
             "whatsapp_link": "https://chat.whatsapp.com/L1234567890",
             "support_ticket_url": "https://help.adpulseai.com",
+            **DEFAULT_WITHDRAWAL_SCHEDULE,
         }
         return [
             {"key": key, "value": config_map.get(key, default_value)}
@@ -672,6 +699,12 @@ async def update_app_config(
     current_user: models.User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_async_db)
 ):
+    if is_withdrawal_schedule_key(config_data.key):
+        try:
+            config_data.value = validate_schedule_value(config_data.key, config_data.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     result = await db.execute(select(models.AppConfig).filter(models.AppConfig.key == config_data.key))
     config = result.scalar_one_or_none()
     

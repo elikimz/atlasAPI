@@ -506,7 +506,7 @@ async def approve_payment(
     if user and payment.type in ("payout", "withdrawal"):
         await send_withdrawal_status_email(
             recipient=user.email,
-            first_name=user.first_name,
+            first_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username,
             amount=float(payment.amount or 0),
             approved=True,
         )
@@ -544,7 +544,7 @@ async def reject_payment(
     if user and payment.type in ("payout", "withdrawal"):
         await send_withdrawal_status_email(
             recipient=user.email,
-            first_name=user.first_name,
+            first_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username,
             amount=float(payment.amount or 0),
             approved=False,
             details=reject_data.admin_notes,

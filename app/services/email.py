@@ -20,6 +20,7 @@ def _build_message(
     status_color: str,
     status_message: str,
     details: str | None,
+    title: str = "Withdrawal update",
 ) -> EmailMessage:
     name = (first_name or "there").strip() or "there"
     safe_name = escape(name)
@@ -27,14 +28,13 @@ def _build_message(
     safe_message = escape(status_message)
     safe_details = escape(details.strip()) if details and details.strip() else ""
 
-    subject = f"AdPulseAI withdrawal {status_label.lower()}"
+    subject = title
     text_lines = [
-        f"Hello {name},",
+        f"Dear {name},",
         "",
-        f"Your AdPulseAI withdrawal request for ${amount:,.2f} has been {status_label.lower()}.",
+        status_message,
         "",
-        f"Status: {status_label}",
-        f"Details: {status_message}",
+        f"STATUS: {status_label}",
     ]
     if details and details.strip():
         text_lines.extend([f"Admin note: {details.strip()}"])
@@ -55,19 +55,19 @@ def _build_message(
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dcdcde;">
           <tr><td style="padding:24px 28px;background:#2271b1;color:#ffffff;">
             <div style="font-size:22px;font-weight:700;letter-spacing:.2px;">AdPulseAI</div>
-            <div style="margin-top:4px;font-size:13px;opacity:.9;">Withdrawal update</div>
+            <div style="margin-top:4px;font-size:13px;opacity:.9;">{escape(title)}</div>
           </td></tr>
           <tr><td style="padding:28px;">
-            <p style="margin:0 0 16px;font-size:16px;">Hello {safe_name},</p>
+            <p style="margin:0 0 16px;font-size:16px;">Dear {safe_name},</p>
             <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#50575e;">{safe_message}</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dcdcde;background:#f6f7f7;">
               <tr><td style="padding:14px 16px;font-size:13px;color:#646970;">Withdrawal amount</td><td align="right" style="padding:14px 16px;font-size:17px;font-weight:700;color:#1d2327;">${amount:,.2f}</td></tr>
               <tr><td style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:13px;color:#646970;">Status</td><td align="right" style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:14px;font-weight:700;color:#{status_color};">{safe_status}</td></tr>
             </table>
             {details_block}
-            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#646970;">If you have questions, please contact AdPulseAI Support from your account.</p>
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#646970;">If you did not request this, please contact AdPulseAI Support immediately.</p>
           </td></tr>
-          <tr><td style="padding:18px 28px;border-top:1px solid #dcdcde;font-size:12px;color:#8c8f94;">This is an automated message. Please do not reply directly to this email.</td></tr>
+          <tr><td style="padding:18px 28px;border-top:1px solid #dcdcde;font-size:12px;color:#8c8f94;">© 2026 AdPulseAI. All rights reserved.</td></tr>
         </table>
       </td></tr>
     </table>
@@ -137,4 +137,41 @@ async def send_withdrawal_status_email(
         return True
     except Exception:
         logger.exception("Could not send withdrawal status email to user %s", recipient)
+        return False
+
+
+async def send_withdrawal_request_received_email(
+    *,
+    recipient: str | None,
+    full_name: str | None,
+    amount: float,
+) -> bool:
+    """Send the initial processing confirmation after a withdrawal is recorded."""
+    message = _build_message(
+        recipient=recipient or "",
+        first_name=full_name,
+        amount=amount,
+        status_label="PROCESSING",
+        status_color="2271b1",
+        status_message=(
+            f"We are pleased to inform you that we have successfully received your "
+            f"${amount:,.2f} withdrawal request. Your request has been recorded in our "
+            "system and is currently undergoing the necessary processing and verification "
+            "procedures. Please allow the required processing time for the transaction to "
+            "be completed. Once finalized, the funds will be released through your selected "
+            "payment method. No further action is required from you at this time."
+        ),
+        details=None,
+        title="Withdrawal Request Received",
+    ) if recipient and "@" in recipient else None
+
+    if message is None:
+        logger.warning("Skipping withdrawal received email: user has no valid email address")
+        return False
+    try:
+        await asyncio.to_thread(_send_sync, message)
+        logger.info("Withdrawal received email sent to user %s", recipient)
+        return True
+    except Exception:
+        logger.exception("Could not send withdrawal received email to user %s", recipient)
         return False
