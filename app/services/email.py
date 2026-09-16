@@ -114,12 +114,13 @@ async def send_withdrawal_status_email(
         logger.warning("Skipping withdrawal email: user has no valid email address")
         return False
 
-    status_label = "Approved" if approved else "Canceled"
+    status_label = "APPROVED" if approved else "CANCELED"
     status_color = "008a20" if approved else "b32d2e"
     status_message = (
-        "Your withdrawal has been approved and is now being processed."
+        f"Congratulations! Your withdrawal request has been approved and sent to your designated wallet. "
+        f"Amount: ${amount:,.2f}. Status: APPROVED."
         if approved
-        else "Your withdrawal was canceled and the amount has been returned to your withdrawal wallet."
+        else f"Your withdrawal was canceled and the amount of ${amount:,.2f} has been returned to your withdrawal wallet. Status: CANCELED."
     )
     message = _build_message(
         recipient=recipient,
