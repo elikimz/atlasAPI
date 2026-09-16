@@ -12,6 +12,7 @@ import os
 from datetime import datetime
 from app.config import settings
 from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache
+from app.services.email import send_withdrawal_status_email
 
 # Configure Cloudinary
 cloudinary.config(
@@ -502,6 +503,13 @@ async def approve_payment(
         payment.payout_date = datetime.now()
     
     await db.commit()
+    if user and payment.type in ("payout", "withdrawal"):
+        await send_withdrawal_status_email(
+            recipient=user.email,
+            first_name=user.first_name,
+            amount=float(payment.amount or 0),
+            approved=True,
+        )
     return {"message": "Payment approved"}
 
 class RejectRequest(BaseModel):
@@ -533,6 +541,14 @@ async def reject_payment(
             user.withdrawal_wallet_balance += payment.amount
             
     await db.commit()
+    if user and payment.type in ("payout", "withdrawal"):
+        await send_withdrawal_status_email(
+            recipient=user.email,
+            first_name=user.first_name,
+            amount=float(payment.amount or 0),
+            approved=False,
+            details=reject_data.admin_notes,
+        )
     return {"message": "Payment rejected and balance refunded if applicable"}
 
 @router.get("/admin/payments/{payment_id}")
