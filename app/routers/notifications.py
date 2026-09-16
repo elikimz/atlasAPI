@@ -127,7 +127,7 @@ async def delete_notification(
         await db.execute(delete(models.Notification).filter(models.Notification.id == notification_id))
         await db.commit()
         if notification.user_id is None:
-            await cache.delete_pattern("atlas:user:*:notifications:*")
+            await cache.delete_pattern("adpulseai:user:*:notifications:*")
         else:
             await invalidate_user_cache(notification.user_id, "notifications")
         return {"message": "Notification deleted successfully"}
@@ -179,7 +179,7 @@ async def send_notification(
     await db.commit()
     await db.refresh(new_notification)
     if new_notification.user_id is None:
-        await cache.delete_pattern("atlas:user:*:notifications:*")
+        await cache.delete_pattern("adpulseai:user:*:notifications:*")
     else:
         await invalidate_user_cache(new_notification.user_id, "notifications")
     return new_notification

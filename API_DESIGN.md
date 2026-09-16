@@ -1,4 +1,4 @@
-# Atlas API Design
+# AdPulseAI API Design
 
 This document describes the supported application API. All protected endpoints require an `Authorization: Bearer <access_token>` header. The API does not use OTP verification or email-based login challenges.
 

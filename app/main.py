@@ -168,4 +168,4 @@ app.include_router(pesaflux.router)
 
 @app.get("/")
 def root() -> dict:
-    return {"message": "Atlas API is running"}
+    return {"message": "AdPulseAI API is running"}

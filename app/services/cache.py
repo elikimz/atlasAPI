@@ -1,4 +1,4 @@
-"""Resilient cache primitives for Atlas API.
+"""Resilient cache primitives for AdPulseAI API.
 
 Redis is the production shared-cache implementation. When it is intentionally not
 configured (local development/tests) or becomes temporarily unavailable, the
@@ -53,19 +53,19 @@ class CacheKeys:
 
     @staticmethod
     def plans() -> str:
-        return "atlas:plans:active"
+        return "adpulseai:plans:active"
 
     @staticmethod
     def app_config() -> str:
-        return "atlas:app-config"
+        return "adpulseai:app-config"
 
     @staticmethod
     def admin_stats() -> str:
-        return "atlas:admin:stats"
+        return "adpulseai:admin:stats"
 
     @staticmethod
     def user_prefix(user_id: int) -> str:
-        return f"atlas:user:{user_id}"
+        return f"adpulseai:user:{user_id}"
 
     @classmethod
     def user_dashboard(cls, user_id: int) -> str:

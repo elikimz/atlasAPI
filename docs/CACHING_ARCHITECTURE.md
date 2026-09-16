@@ -1,8 +1,8 @@
-# Atlas Caching Architecture
+# AdPulseAI Caching Architecture
 
 ## Purpose
 
-This design introduces a **two-tier server-state architecture** for Atlas. TanStack Query owns browser-side API state and applies stale-while-revalidate behavior, while Redis owns reusable backend response data. PostgreSQL remains the source of truth. All cache operations are fail-open: an unavailable Redis instance must never prevent an authenticated request from reaching PostgreSQL.
+This design introduces a **two-tier server-state architecture** for AdPulseAI. TanStack Query owns browser-side API state and applies stale-while-revalidate behavior, while Redis owns reusable backend response data. PostgreSQL remains the source of truth. All cache operations are fail-open: an unavailable Redis instance must never prevent an authenticated request from reaching PostgreSQL.
 
 > Cache entries are performance artifacts, not sources of truth. Every write commits to PostgreSQL first and invalidates only the affected representations after a successful commit.
 
@@ -21,16 +21,16 @@ The frontend uses one query client for the complete application. Query results a
 
 | Resource group | Frontend stale time | Backend TTL | Cache key shape | Why |
 | --- | ---: | ---: | --- | --- |
-| Plans / package catalog | 30 minutes | 30 minutes | `atlas:plans:active` | Shared, infrequently modified public catalog |
-| Application configuration | 1 hour | 1 hour | `atlas:app-config` | Small shared configuration document |
+| Plans / package catalog | 30 minutes | 30 minutes | `adpulseai:plans:active` | Shared, infrequently modified public catalog |
+| Application configuration | 1 hour | 1 hour | `adpulseai:app-config` | Small shared configuration document |
 | Authenticated user / profile | 10 minutes | Browser only | `['user','me']`, `['profile']` | Avoids repeated `/auth/me` requests during navigation |
-| Available and playable tasks | 5 minutes | 5 minutes | `atlas:user:{id}:tasks:*` | User- and plan-scoped read model |
-| Dashboard / wallet summary | 30 seconds | 30 seconds | `atlas:user:{id}:dashboard` | Costly aggregate that changes after financial/task writes |
-| Referral summary / codes / active list | 5 minutes | 5 minutes | `atlas:user:{id}:referrals:*` | User-scoped aggregate and hierarchy data |
-| Payment history and overview | 1 minute | 1 minute | `atlas:user:{id}:payments:*` | Changes after deposits, withdrawals, and approval workflows |
+| Available and playable tasks | 5 minutes | 5 minutes | `adpulseai:user:{id}:tasks:*` | User- and plan-scoped read model |
+| Dashboard / wallet summary | 30 seconds | 30 seconds | `adpulseai:user:{id}:dashboard` | Costly aggregate that changes after financial/task writes |
+| Referral summary / codes / active list | 5 minutes | 5 minutes | `adpulseai:user:{id}:referrals:*` | User-scoped aggregate and hierarchy data |
+| Payment history and overview | 1 minute | 1 minute | `adpulseai:user:{id}:payments:*` | Changes after deposits, withdrawals, and approval workflows |
 | Withdrawal accounts | 10 minutes | Browser only | `['withdrawalAccounts']` | Low-change user settings |
-| Notifications | 20 seconds | 20 seconds | `atlas:user:{id}:notifications:*` | Short-lived freshness with a single polling owner |
-| Admin statistics | 30 seconds | 30 seconds | `atlas:admin:stats` | Aggregate dashboard data shared by administrators |
+| Notifications | 20 seconds | 20 seconds | `adpulseai:user:{id}:notifications:*` | Short-lived freshness with a single polling owner |
+| Admin statistics | 30 seconds | 30 seconds | `adpulseai:admin:stats` | Aggregate dashboard data shared by administrators |
 
 The frontend uses `refetchOnWindowFocus: true` for most queries and a focused 20-second interval only for notifications. This replaces duplicated component-level intervals with one request stream shared across all notification consumers.
 
@@ -86,4 +86,4 @@ The implementation is complete when the following conditions hold:
 
 ## References
 
-This document describes the Atlas implementation contract. It intentionally contains no external runtime assumptions beyond the repositories’ existing FastAPI, SQLAlchemy, React, and Axios stack.
+This document describes the AdPulseAI implementation contract. It intentionally contains no external runtime assumptions beyond the repositories’ existing FastAPI, SQLAlchemy, React, and Axios stack.

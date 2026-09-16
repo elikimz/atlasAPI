@@ -1,4 +1,4 @@
-# Atlas Cache Refactor — Performance Report
+# AdPulseAI Cache Refactor — Performance Report
 
 **Test date:** 2026-07-21  
 **Scope:** Backend response caching, query indexes, frontend server-state caching, and mutation invalidation.

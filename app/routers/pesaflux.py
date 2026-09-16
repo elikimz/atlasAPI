@@ -200,7 +200,7 @@ async def initiate_stk_push(
 
         # 5. Generate unique reference
         plan_ref_id = plan.id if plan else "RCH"
-        reference = f"ATLAS-{current_user.id}-{plan_ref_id}-{uuid.uuid4().hex[:10].upper()}"
+        reference = f"ADPULSEAI-{current_user.id}-{plan_ref_id}-{uuid.uuid4().hex[:10].upper()}"
 
         # 6. Create pending PesaFluxPayment record
         pf_payment = PesaFluxPayment(

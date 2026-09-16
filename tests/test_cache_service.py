@@ -1,4 +1,4 @@
-"""Unit coverage for Atlas' resilient cache and invalidation contract."""
+"""Unit coverage for AdPulseAI's resilient cache and invalidation contract."""
 
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ async def test_get_or_set_caches_one_loader_result() -> None:
         calls += 1
         return {"value": 42}
 
-    first = await cache.get_or_set("atlas:test:hit", 60, loader)
-    second = await cache.get_or_set("atlas:test:hit", 60, loader)
+    first = await cache.get_or_set("adpulseai:test:hit", 60, loader)
+    second = await cache.get_or_set("adpulseai:test:hit", 60, loader)
 
     assert first == {"value": 42}
     assert second == {"value": 42}
@@ -68,7 +68,7 @@ async def test_concurrent_cache_miss_is_coalesced_per_key() -> None:
         return {"generation": calls}
 
     results = await asyncio.gather(
-        *(cache.get_or_set("atlas:test:coalesced", 60, loader) for _ in range(12))
+        *(cache.get_or_set("adpulseai:test:coalesced", 60, loader) for _ in range(12))
     )
 
     assert results == [{"generation": 1}] * 12

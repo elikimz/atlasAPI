@@ -9,7 +9,7 @@ load_dotenv()
 
 
 class Settings:
-    PROJECT_NAME: str = "Atlas API"
+    PROJECT_NAME: str = "AdPulseAI API"
     PROJECT_VERSION: str = "1.0.0"
 
     DATABASE_URL: str | None = os.getenv("APPSETTING_DATABASE_URL") or os.getenv("DATABASE_URL")
