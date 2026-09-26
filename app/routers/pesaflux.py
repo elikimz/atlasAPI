@@ -72,6 +72,22 @@ def _amount_matches(reported_amount: object, expected_amount: float) -> bool:
         return False
 
 
+def _internal_reference_matches(reported_reference: object, expected_reference: str) -> bool:
+    """Validate our custom reference when the provider echoes it.
+
+    Some PesaFlux status responses expose a provider-side transaction reference
+    instead of the custom reference sent during STK initiation. The request ID
+    is already tied to our pending record, so only an echoed ADPULSEAI reference
+    must match exactly; provider-generated references are accepted.
+    """
+    if not reported_reference:
+        return True
+    reported = str(reported_reference)
+    if reported.startswith("ADPULSEAI-"):
+        return reported == expected_reference
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Schemas
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,7 +361,7 @@ async def get_payment_status(
         reported_reference = status_res.get("transaction_reference")
         reported_amount = status_res.get("transaction_amount")
         if (
-            (reported_reference and reported_reference != payment.reference)
+            (not _internal_reference_matches(reported_reference, payment.reference))
             or (reported_amount is not None and not _amount_matches(reported_amount, payment.amount))
         ):
             logger.error("PesaFlux status mismatch for payment reference=%s", payment.reference)
@@ -445,14 +461,32 @@ async def pesaflux_webhook(
     is_failure = bool(response_code) and response_code not in {"0", "200"}
 
     if is_success:
-        if not payment.transaction_request_id:
-            logger.warning("PesaFlux callback received before request id was persisted")
-            return {"status": "accepted", "message": "Awaiting status verification"}
-        verified = await pesaflux_service.get_payment_status(payment.transaction_request_id)
-        if not verified.get("success") or verified.get("status") != "completed":
-            return {"status": "accepted", "message": "Awaiting provider status verification"}
+        callback_verified = {
+            "success": True,
+            "status": "completed",
+            "transaction_id": data.get("TransactionID"),
+            "mpesa_receipt": data.get("TransactionReceipt"),
+            "transaction_reference": reference,
+            "transaction_amount": callback_amount,
+            "phone": callback_phone,
+        }
+        if payment.transaction_request_id:
+            verified = await pesaflux_service.get_payment_status(payment.transaction_request_id)
+            if not verified.get("success") or verified.get("status") != "completed":
+                # PesaFlux has already delivered a successful, amount- and
+                # phone-matched callback. Its status endpoint can briefly lag;
+                # do not leave a paid deposit pending because of that race.
+                logger.warning("Using successful PesaFlux callback while status endpoint is not final for %s", payment.reference)
+                verified = callback_verified
+        else:
+            # A very fast provider callback can arrive before the initiation
+            # response has committed transaction_request_id. The callback has
+            # already been validated against our reference, amount, and phone;
+            # preserve it as the provider confirmation instead of dropping it.
+            logger.warning("Processing PesaFlux callback before request id was persisted")
+            verified = callback_verified
         if (
-            (verified.get("transaction_reference") and verified["transaction_reference"] != payment.reference)
+            not _internal_reference_matches(verified.get("transaction_reference"), payment.reference)
             or (verified.get("transaction_amount") is not None and not _amount_matches(verified["transaction_amount"], payment.amount))
         ):
             logger.error("PesaFlux verification mismatch for payment reference=%s", payment.reference)
