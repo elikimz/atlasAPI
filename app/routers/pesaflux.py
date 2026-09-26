@@ -195,10 +195,11 @@ async def initiate_stk_push(
 
         # Case B: Pure recharge (amount-based)
         elif request_data.amount:
-            if request_data.amount < 20:
+            minimum_recharge_usd = 1 / float(getattr(settings, "PESAFLUX_USD_TO_KES_RATE", 130))
+            if request_data.amount < minimum_recharge_usd:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Minimum recharge amount is $20."
+                    detail="Minimum recharge amount is KES 1."
                 )
             amount_usd = request_data.amount
             payment_type = "recharge"
