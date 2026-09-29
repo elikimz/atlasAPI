@@ -320,19 +320,17 @@ async def initiate_stk_push(
         # moved to manual review; they are never auto-credited by polling/webhook.
         pf_payment.transaction_request_id = init_res.get("transaction_request_id")
         if payment_type == "recharge":
-            review = await _create_manual_deposit_review(
-                pf_payment,
-                db,
-                "STK request accepted by provider; awaiting administrator verification",
-            )
+            # The prompt has only been sent at this point. Keep the attempt
+            # pending until the user confirms they entered their PIN, then the
+            # explicit submit-review endpoint creates the admin deposit record.
+            await db.commit()
             return {
                 "reference": reference,
                 "transaction_request_id": pf_payment.transaction_request_id or "",
                 "amount_kes": amount_kes,
                 "amount_usd": amount_usd,
                 "plan_name": plan_name,
-                "review_payment_id": review.id,
-                "message": "Your M-Pesa deposit was submitted for manual review. An administrator will verify it before crediting your wallet.",
+                "message": "M-Pesa prompt sent. Enter your PIN, then confirm below to submit this deposit for review.",
             }
 
         await db.commit()
@@ -352,6 +350,49 @@ async def initiate_stk_push(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to initiate payment. Please try again later.",
         )
+
+
+@router.post("/submit-review/{ref}")
+async def submit_deposit_for_review(
+    ref: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Submit an M-Pesa recharge attempt to the admin queue after PIN entry."""
+    result = await db.execute(
+        select(PesaFluxPayment).filter(
+            PesaFluxPayment.reference == ref,
+            PesaFluxPayment.user_id == current_user.id,
+        )
+    )
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment reference not found.")
+    if payment.payment_type != "recharge" or payment.plan_id is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only M-Pesa deposits can be submitted for manual review.")
+
+    existing = await db.execute(
+        select(models.Payment).filter(
+            models.Payment.user_id == current_user.id,
+            models.Payment.type == "deposit",
+            models.Payment.payment_method == "M-Pesa (Manual Review)",
+            models.Payment.admin_notes.like(f"%Reference: {ref}.%"),
+        )
+    )
+    review = existing.scalars().first()
+    if review:
+        return {"id": review.id, "status": review.status, "message": "This deposit is already under review."}
+
+    review = await _create_manual_deposit_review(
+        payment,
+        db,
+        "User confirmed PIN entry and submitted the attempt for administrator verification",
+    )
+    return {
+        "id": review.id,
+        "status": review.status,
+        "message": "Your deposit is now under review. An administrator will verify it before crediting your wallet.",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -512,10 +553,7 @@ async def pesaflux_webhook(
     # Manual-review deposits must never be auto-processed by a callback. This
     # also makes late callbacks harmless after an administrator has acted.
     if payment.payment_type == "recharge" or payment.plan_id is None:
-        if payment.status == "pending":
-            payment.status = "under_review"
-            await db.commit()
-        return {"status": "accepted", "message": "Callback acknowledged; deposit remains under manual review"}
+        return {"status": "accepted", "message": "Callback acknowledged; awaiting user confirmation for manual review"}
     if payment.status != "pending":
         return {"status": "success", "message": "Already processed"}
 
