@@ -307,7 +307,7 @@ class PaymentMethodUpdate(BaseModel):
     details: dict
 
 class DepositRequestSchema(BaseModel):
-    amount: float
+    amount: float = Field(..., ge=20.0, description="Minimum deposit amount in USD")
     payment_method: str
     network: str
     proof_url: str
