@@ -325,7 +325,7 @@ async def get_payment_overview(
         return {
             "total_paid": sum(payment.amount for payment in payments if payment.status == "paid"),
             "previous_unpaid": 0.0,
-            "current_pending": sum(payment.amount for payment in payments if payment.status == "pending"),
+            "current_pending": sum(payment.amount for payment in payments if payment.status in ("pending", "under_review")),
         }
 
     return await cache.get_or_set(

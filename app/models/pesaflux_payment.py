@@ -16,9 +16,10 @@ class PesaFluxPayment(Base):
     Tracks every PesaFlux M-Pesa STK Push payment attempt.
 
     Lifecycle:
-        pending   -> STK Push initiated, waiting for user to complete on phone
-        completed -> Webhook confirmed success; deposit wallet credited & plan activated
-        failed    -> Webhook confirmed failure (cancelled, timeout, insufficient funds, etc.)
+        pending      -> STK Push initiated
+        under_review -> Recharge is waiting for administrator verification
+        completed   -> Confirmed plan payment (legacy/provider flow)
+        failed      -> Confirmed failure (legacy/provider flow)
     """
     __tablename__ = "pesaflux_payments"
 
@@ -51,7 +52,7 @@ class PesaFluxPayment(Base):
     # Amount in USD (the plan price at time of initiation)
     amount_usd = Column(Float, nullable=False)
 
-    # Payment status: pending | completed | failed
+    # Payment status: pending | under_review | completed | failed
     status = Column(String, default="pending", nullable=False, index=True)
 
     # Always "pesaflux" for traceability

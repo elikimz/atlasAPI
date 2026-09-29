@@ -149,7 +149,7 @@ class Payment(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     amount = Column(Float, nullable=False)
     period = Column(String, nullable=False)
-    status = Column(String, default="pending") # pending, paid, in_progress, rejected, cancelled
+    status = Column(String, default="pending") # pending, under_review, paid, in_progress, rejected, cancelled
     type = Column(String, default="payout") # payout, deposit
     payment_method = Column(String, nullable=True)
     network = Column(String, nullable=True)

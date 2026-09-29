@@ -110,21 +110,56 @@ class InitiateStkRequest(BaseModel):
 
 class InitiateStkResponse(BaseModel):
     reference: str
-    transaction_request_id: str
+    transaction_request_id: str = ""
     amount_kes: int
     amount_usd: float
     plan_name: str
     message: str
+    review_payment_id: int | None = None
 
 
 class PaymentStatusResponse(BaseModel):
     reference: str
-    status: str          # pending | completed | failed
+    status: str          # pending | under_review | completed | failed
     plan_name: str | None
     amount_usd: float
     amount_kes: float = 0
     mpesa_receipt: str | None = None
     message: str = ""
+
+
+async def _create_manual_deposit_review(
+    payment: PesaFluxPayment,
+    db: AsyncSession,
+    provider_message: str,
+) -> models.Payment:
+    """Create the admin-review deposit for a recharge attempt.
+
+    M-Pesa provider callbacks and status polling are intentionally not trusted for
+    wallet crediting. The regular payments table is the single approval workflow;
+    the admin must approve it before the deposit wallet changes.
+    """
+    review = models.Payment(
+        user_id=payment.user_id,
+        amount=payment.amount_usd,
+        period=_utc_now().strftime("%b %Y"),
+        status="under_review",
+        type="deposit",
+        payment_method="M-Pesa (Manual Review)",
+        network="STK Push",
+        destination_number=payment.phone,
+        admin_notes=(
+            f"Manual M-Pesa review. Reference: {payment.reference}. "
+            f"Phone: {payment.phone}. Provider result: {provider_message}"
+        ),
+    )
+    payment.status = "under_review"
+    db.add(review)
+    await db.commit()
+    await db.refresh(review)
+    await invalidate_user_cache(payment.user_id, "payments", "dashboard")
+    await invalidate_shared_cache("admin_stats")
+    return review
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,20 +277,35 @@ async def initiate_stk_push(
         )
 
         if not init_res["success"]:
-            # Update record as failed immediately
+            error_msg = init_res.get("error") or init_res.get("message") or "The M-Pesa provider did not confirm the STK request."
+            error_code = init_res.get("error_code", "provider_error")
+
+            # A recharge attempt is always visible to the admin, even when the
+            # provider reports a failure or is unavailable. The admin can verify
+            # the M-Pesa account externally and approve or reject the deposit.
+            if payment_type == "recharge":
+                review = await _create_manual_deposit_review(pf_payment, db, error_msg)
+                logger.warning(
+                    "M-Pesa recharge sent to manual review after provider result for reference=%s: %s",
+                    reference, error_msg,
+                )
+                return {
+                    "reference": reference,
+                    "transaction_request_id": "",
+                    "amount_kes": amount_kes,
+                    "amount_usd": amount_usd,
+                    "plan_name": plan_name,
+                    "review_payment_id": review.id,
+                    "message": "Your M-Pesa deposit was submitted for manual review. An administrator will verify it before crediting your wallet.",
+                }
+
+            # Plan purchases still require a confirmed provider initiation.
             pf_payment.status = "failed"
             await db.commit()
-            
-            # Handle errors from pesaflux_service
-            error_msg = init_res.get("error") or init_res.get("message") or "Failed to initiate M-Pesa payment. Please try again later."
-            error_code = init_res.get("error_code", "provider_error")
-            
             logger.error(
                 "PesaFlux STK Push failed for reference=%s: code=%s msg=%s",
                 reference, error_code, error_msg
             )
-            
-            # Map internal error codes to appropriate HTTP status codes
             if error_code in ("config_missing", "provider_error", "network_error", "timeout"):
                 http_status = status.HTTP_503_SERVICE_UNAVAILABLE
             elif error_code in ("account_not_verified", "auth_error", "auth_or_account_error"):
@@ -264,19 +314,31 @@ async def initiate_stk_push(
                 http_status = status.HTTP_400_BAD_REQUEST
             else:
                 http_status = status.HTTP_503_SERVICE_UNAVAILABLE
-            
-            raise HTTPException(
-                status_code=http_status,
-                detail=error_msg
-            )
+            raise HTTPException(status_code=http_status, detail=error_msg)
 
-        # 8. Update record with transaction request ID
+        # 8. Save the provider request ID. Recharge records are immediately
+        # moved to manual review; they are never auto-credited by polling/webhook.
         pf_payment.transaction_request_id = init_res.get("transaction_request_id")
-        await db.commit()
+        if payment_type == "recharge":
+            review = await _create_manual_deposit_review(
+                pf_payment,
+                db,
+                "STK request accepted by provider; awaiting administrator verification",
+            )
+            return {
+                "reference": reference,
+                "transaction_request_id": pf_payment.transaction_request_id or "",
+                "amount_kes": amount_kes,
+                "amount_usd": amount_usd,
+                "plan_name": plan_name,
+                "review_payment_id": review.id,
+                "message": "Your M-Pesa deposit was submitted for manual review. An administrator will verify it before crediting your wallet.",
+            }
 
+        await db.commit()
         return {
             "reference": reference,
-            "transaction_request_id": pf_payment.transaction_request_id,
+            "transaction_request_id": pf_payment.transaction_request_id or "",
             "amount_kes": amount_kes,
             "amount_usd": amount_usd,
             "plan_name": plan_name,
@@ -427,7 +489,10 @@ async def pesaflux_webhook(
     request: Request,
     db: AsyncSession = Depends(get_async_db),
 ):
-    """Reconcile documented PesaFlux callbacks only after provider verification."""
+    """Acknowledge legacy callbacks without changing wallet or plan state.
+
+    M-Pesa deposits are deliberately reviewed through the admin payments queue.
+    """
     try:
         data = await request.json()
     except Exception:
@@ -444,6 +509,13 @@ async def pesaflux_webhook(
     if not payment:
         logger.warning("PesaFlux callback referenced an unknown payment")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment reference not found")
+    # Manual-review deposits must never be auto-processed by a callback. This
+    # also makes late callbacks harmless after an administrator has acted.
+    if payment.payment_type == "recharge" or payment.plan_id is None:
+        if payment.status == "pending":
+            payment.status = "under_review"
+            await db.commit()
+        return {"status": "accepted", "message": "Callback acknowledged; deposit remains under manual review"}
     if payment.status != "pending":
         return {"status": "success", "message": "Already processed"}
 

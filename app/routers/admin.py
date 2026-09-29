@@ -11,7 +11,7 @@ import cloudinary.uploader
 import os
 from datetime import datetime
 from app.config import settings
-from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache
+from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
 from app.services.email import send_withdrawal_status_email
 
 # Configure Cloudinary
@@ -142,7 +142,7 @@ async def get_admin_stats(
     """Serve the high-frequency aggregate admin dashboard from a short TTL cache."""
     async def load_admin_stats() -> dict:
         users_count = await db.execute(select(func.count(User.id)))
-        pending_payments = await db.execute(select(func.count(Payment.id)).filter(Payment.status == "pending"))
+        pending_payments = await db.execute(select(func.count(Payment.id)).filter(Payment.status.in_(["pending", "under_review"])))
         total_payouts = await db.execute(
             select(func.sum(Payment.amount)).filter(Payment.status == "paid", Payment.type == "payout")
         )
@@ -486,8 +486,8 @@ async def approve_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     
-    if payment.status != "pending":
-        raise HTTPException(status_code=400, detail="Payment is not pending")
+    if payment.status not in ("pending", "under_review"):
+        raise HTTPException(status_code=400, detail="Payment is not awaiting review")
     
     payment.status = "paid"
     
@@ -503,6 +503,9 @@ async def approve_payment(
         payment.payout_date = datetime.now()
     
     await db.commit()
+    await invalidate_shared_cache("admin_stats")
+    if user:
+        await invalidate_user_cache(user.id, "payments", "dashboard")
     if user and payment.type in ("payout", "withdrawal"):
         await send_withdrawal_status_email(
             recipient=user.email,
@@ -527,20 +530,24 @@ async def reject_payment(
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     
-    if payment.status != "pending":
-        raise HTTPException(status_code=400, detail="Payment is not pending")
+    if payment.status not in ("pending", "under_review"):
+        raise HTTPException(status_code=400, detail="Payment is not awaiting review")
     
     payment.status = "rejected"
     payment.admin_notes = reject_data.admin_notes
-    
+
+    result = await db.execute(select(User).filter(User.id == payment.user_id))
+    user = result.scalar_one_or_none()
+
     # If rejecting a withdrawal, refund the user
     if payment.type == "payout" or payment.type == "withdrawal":
-        result = await db.execute(select(User).filter(User.id == payment.user_id))
-        user = result.scalar_one_or_none()
         if user:
             user.withdrawal_wallet_balance += payment.amount
             
     await db.commit()
+    await invalidate_shared_cache("admin_stats")
+    if user:
+        await invalidate_user_cache(user.id, "payments", "dashboard")
     if user and payment.type in ("payout", "withdrawal"):
         await send_withdrawal_status_email(
             recipient=user.email,
