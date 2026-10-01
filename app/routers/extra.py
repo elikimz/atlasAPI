@@ -634,7 +634,6 @@ async def request_withdrawal(
     
     # 4. Create payment record
     try:
-        from datetime import datetime, timezone
         new_payment = models.Payment(
             user_id=current_user.id,
             amount=withdrawal_data.amount,
