@@ -576,6 +576,27 @@ async def request_withdrawal(
             detail=f"Withdrawals are currently closed. {schedule_summary(withdrawal_schedule)}",
         )
 
+    # Strict daily limit: once a withdrawal request is created today, no
+    # second request is allowed until the next UTC calendar day. This check
+    # intentionally includes every payout status, including paid/rejected/
+    # cancelled, because the rule limits requests rather than outcomes.
+    utc_now = datetime.now(timezone.utc)
+    day_start = utc_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    next_day = day_start + timedelta(days=1)
+    daily_withdrawal_result = await db.execute(
+        select(models.Payment.id).where(
+            models.Payment.user_id == current_user.id,
+            models.Payment.type == "payout",
+            models.Payment.created_at >= day_start,
+            models.Payment.created_at < next_day,
+        ).limit(1)
+    )
+    if daily_withdrawal_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You can only make one withdrawal per day. Please try again tomorrow.",
+        )
+
     pending_result = await db.execute(
         select(models.Payment.id).where(
             models.Payment.user_id == current_user.id,
