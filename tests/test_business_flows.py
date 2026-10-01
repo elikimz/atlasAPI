@@ -227,3 +227,61 @@ async def test_dashboard_cache_latency_benchmark(
     # Verify cache behavior without imposing a hardware-specific absolute latency budget.
     assert warm_median < cold_median
     await cache.reset_for_tests()
+
+@pytest.mark.anyio
+async def test_invite_flow_registers_and_lists_three_referral_tiers(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    async def register(username: str, email: str, phone: str, referral_code: str | None = None) -> None:
+        payload = {
+            "username": username,
+            "password": TEST_PASSWORD,
+            "phone_number": phone,
+            "email": email,
+            "first_name": username.title(),
+            "last_name": "Invite",
+        }
+        if referral_code:
+            payload["referral_code"] = referral_code
+        response = await client.post("/auth/register/final", json=payload)
+        assert response.status_code == 201, response.text
+
+    await register("invite_root", "invite.root@example.test", "+254700000101")
+    root_headers = await login_header(client, "invite_root")
+    initial_summary = await client.get("/referrals/summary", headers=root_headers)
+    assert initial_summary.status_code == 200
+    assert initial_summary.json()["total_invites"] == 0
+    root = await test_db.scalar(select(models.User).where(models.User.username == "invite_root"))
+    root_code = await test_db.scalar(select(models.ReferralCode).where(models.ReferralCode.user_id == root.id))
+    assert root_code is not None
+
+    await register("invite_child", "invite.child@example.test", "+254700000102", root_code.code)
+    child = await test_db.scalar(select(models.User).where(models.User.username == "invite_child"))
+    child_code = await test_db.scalar(select(models.ReferralCode).where(models.ReferralCode.user_id == child.id))
+    assert child_code is not None
+    relationship = await test_db.scalar(select(models.ReferralRelationship).where(models.ReferralRelationship.user_id == child.id))
+    assert relationship is not None and relationship.referrer_id == root.id
+
+    await register("invite_grandchild", "invite.grandchild@example.test", "+254700000103", child_code.code)
+    grandchild = await test_db.scalar(select(models.User).where(models.User.username == "invite_grandchild"))
+    grandchild_code = await test_db.scalar(select(models.ReferralCode).where(models.ReferralCode.user_id == grandchild.id))
+    assert grandchild_code is not None
+
+    await register("invite_greatgrandchild", "invite.great@example.test", "+254700000104", grandchild_code.code)
+
+    codes = await client.get("/referrals/codes", headers=root_headers)
+    assert codes.status_code == 200
+    assert codes.json()[0]["code"] == root_code.code
+
+    active = await client.get("/referrals/active", headers=root_headers)
+    assert active.status_code == 200
+    assert {entry["tier"] for entry in active.json()} == {"A", "B", "C"}
+    assert len(active.json()) == 3
+    assert all(entry["status"] == "Invite Sent" and entry["is_active"] is False for entry in active.json())
+
+    summary = await client.get("/referrals/summary", headers=root_headers)
+    assert summary.status_code == 200, summary.text
+    summary_data = summary.json()
+    assert summary_data["users_referred"] == 1
+    assert summary_data["total_invites"] == 1
+    assert summary_data["active_invites"] == 0

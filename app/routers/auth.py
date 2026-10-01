@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database.database import get_async_db
 from app.models import models
+from app.services.cache import invalidate_user_cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -356,11 +357,16 @@ async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_asy
                     )
                 )
                 referral.signups_count = (referral.signups_count or 0) + 1
+                # The inviter may already have the referral summary/codes
+                # cached from opening the invite page before this signup.
+                # Invalidate after the registration transaction commits below.
             else:
                 logger.info("Registration completed without referral link: supplied code was not found")
 
         db.add(models.ReferralCode(user_id=user.id, code=user.referral_code))
         await db.commit()
+        if data.referral_code and referral:
+            await invalidate_user_cache(referral.user_id, "referrals", "dashboard")
         return {"message": "Registration successful"}
     except HTTPException:
         await db.rollback()
