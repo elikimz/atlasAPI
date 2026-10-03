@@ -405,7 +405,14 @@ async def create_deposit_request(
     current_user: models.User = Depends(get_current_user)
 ):
     try:
-        minimum_amount = 3.0 if deposit_data.payment_method.strip().lower() in {"crypto", "usdt"} else 20.0
+        payment_method = deposit_data.payment_method.strip().lower()
+        is_crypto = payment_method in {"crypto", "usdt"}
+        if is_crypto and deposit_data.network.strip().upper() != "BEP20":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Only BEP20 is supported for crypto deposits.",
+            )
+        minimum_amount = 3.0 if is_crypto else 20.0
         if deposit_data.amount < minimum_amount:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

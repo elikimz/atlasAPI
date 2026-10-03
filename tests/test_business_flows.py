@@ -294,16 +294,23 @@ async def test_crypto_minimum_is_three_but_other_deposits_remain_twenty(
     crypto = await client.post(
         "/payments/deposit",
         headers=headers,
-        json={"amount": 3, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+        json={"amount": 3, "payment_method": "USDT", "network": "BEP20", "proof_url": "https://example.test/proof"},
     )
     assert crypto.status_code == 200, crypto.text
 
     below_crypto_minimum = await client.post(
         "/payments/deposit",
         headers=headers,
-        json={"amount": 2.99, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+        json={"amount": 2.99, "payment_method": "USDT", "network": "BEP20", "proof_url": "https://example.test/proof"},
     )
     assert below_crypto_minimum.status_code == 422
+
+    unsupported_network = await client.post(
+        "/payments/deposit",
+        headers=headers,
+        json={"amount": 3, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+    )
+    assert unsupported_network.status_code == 422
 
     below_other_minimum = await client.post(
         "/payments/deposit",
