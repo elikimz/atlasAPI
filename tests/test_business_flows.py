@@ -285,3 +285,29 @@ async def test_invite_flow_registers_and_lists_three_referral_tiers(
     assert summary_data["users_referred"] == 1
     assert summary_data["total_invites"] == 1
     assert summary_data["active_invites"] == 0
+
+@pytest.mark.anyio
+async def test_crypto_minimum_is_three_but_other_deposits_remain_twenty(
+    client: AsyncClient, purchase_scenario: dict[str, models.User]
+) -> None:
+    headers = await login_header(client, purchase_scenario["purchaser"].username)
+    crypto = await client.post(
+        "/payments/deposit",
+        headers=headers,
+        json={"amount": 3, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+    )
+    assert crypto.status_code == 200, crypto.text
+
+    below_crypto_minimum = await client.post(
+        "/payments/deposit",
+        headers=headers,
+        json={"amount": 2.99, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+    )
+    assert below_crypto_minimum.status_code == 422
+
+    below_other_minimum = await client.post(
+        "/payments/deposit",
+        headers=headers,
+        json={"amount": 19.99, "payment_method": "Wise", "network": "Wise", "proof_url": "https://example.test/proof"},
+    )
+    assert below_other_minimum.status_code == 422

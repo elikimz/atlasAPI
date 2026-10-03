@@ -307,7 +307,7 @@ class PaymentMethodUpdate(BaseModel):
     details: dict
 
 class DepositRequestSchema(BaseModel):
-    amount: float = Field(..., ge=20.0, description="Minimum deposit amount in USD")
+    amount: float = Field(..., ge=3.0, description="Minimum crypto deposit amount in USD")
     payment_method: str
     network: str
     proof_url: str
@@ -405,6 +405,12 @@ async def create_deposit_request(
     current_user: models.User = Depends(get_current_user)
 ):
     try:
+        minimum_amount = 3.0 if deposit_data.payment_method.strip().lower() in {"crypto", "usdt"} else 20.0
+        if deposit_data.amount < minimum_amount:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Minimum {deposit_data.payment_method} deposit amount is ${minimum_amount:.2f}.",
+            )
         new_payment = models.Payment(
             user_id=current_user.id,
             amount=deposit_data.amount,
@@ -425,6 +431,9 @@ async def create_deposit_request(
             "status": new_payment.status,
             "message": "Deposit request submitted successfully. Please wait for admin approval."
         }
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
