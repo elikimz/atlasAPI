@@ -383,12 +383,18 @@ async def test_admin_can_reset_user_withdrawal_password(
     admin_headers = await login_header(client, admin.username)
     target = purchase_scenario["purchaser"]
 
-    reset = await client.post(
-        f"/admin/users/{target.id}/withdrawal-password",
-        headers=admin_headers,
+    reset = await client.post(f"/admin/users/{target.id}/withdrawal-password", headers=admin_headers)
+    assert reset.status_code == 200, reset.text
+    await test_db.refresh(target)
+    assert target.withdrawal_password is None
+
+    target_headers = await login_header(client, target.username)
+    set_again = await client.post(
+        "/settings/withdrawal-password",
+        headers=target_headers,
         json={"new_password": "new-withdrawal-password"},
     )
-    assert reset.status_code == 200, reset.text
+    assert set_again.status_code == 200, set_again.text
     await test_db.refresh(target)
     assert target.withdrawal_password is not None
     assert verify_password("new-withdrawal-password", target.withdrawal_password)
