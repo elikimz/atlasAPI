@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database.database import get_async_db
 from app.main import app
 from app.models import models
-from app.routers.auth import get_password_hash
+from app.routers.auth import get_password_hash, verify_password
 from app.services.cache import cache
 
 
@@ -365,3 +365,30 @@ async def test_crypto_withdrawal_minimum_is_three_dollars(
     )
     assert withdrawal.status_code == 422
     assert "minimum crypto withdrawal" in withdrawal.json()["detail"].lower()
+
+@pytest.mark.anyio
+async def test_admin_can_reset_user_withdrawal_password(
+    client: AsyncClient, test_db: AsyncSession, purchase_scenario: dict[str, models.User]
+) -> None:
+    admin = models.User(
+        username="flow_admin",
+        email="flow.admin@example.test",
+        phone_number="+254700000099",
+        password_hash=get_password_hash(TEST_PASSWORD),
+        role="admin",
+        is_admin=True,
+    )
+    test_db.add(admin)
+    await test_db.commit()
+    admin_headers = await login_header(client, admin.username)
+    target = purchase_scenario["purchaser"]
+
+    reset = await client.post(
+        f"/admin/users/{target.id}/withdrawal-password",
+        headers=admin_headers,
+        json={"new_password": "new-withdrawal-password"},
+    )
+    assert reset.status_code == 200, reset.text
+    await test_db.refresh(target)
+    assert target.withdrawal_password is not None
+    assert verify_password("new-withdrawal-password", target.withdrawal_password)

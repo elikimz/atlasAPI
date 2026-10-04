@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask, Certification, Payment, Plan, ReferralCode, ReferralRelationship
 from app.routers.auth import get_current_admin_user, get_password_hash
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import cloudinary
 import cloudinary.uploader
 import os
@@ -96,6 +96,9 @@ class UserUpdate(BaseModel):
     withdrawal_wallet_balance: float | None = None
     performance_bonus_balance: float | None = None
     referral_code: str | None = None
+
+class WithdrawalPasswordReset(BaseModel):
+    new_password: str = Field(min_length=4, max_length=72)
 
 class PaymentUpdate(BaseModel):
     amount: float | None = None
@@ -415,6 +418,23 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+@router.post("/admin/users/{user_id}/withdrawal-password", response_model=dict)
+async def reset_user_withdrawal_password(
+    user_id: int,
+    reset_data: WithdrawalPasswordReset,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.withdrawal_password = get_password_hash(reset_data.new_password)
+    await db.commit()
+    await db.refresh(user)
+    return {"message": "User withdrawal password reset successfully"}
 
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
