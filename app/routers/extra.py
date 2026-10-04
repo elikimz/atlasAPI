@@ -657,6 +657,11 @@ async def request_withdrawal(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Only BEP20 is supported for crypto withdrawals.",
         )
+    if account.type.strip().lower() == "crypto" and withdrawal_data.amount < 3.0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Minimum crypto withdrawal amount is $3.00.",
+        )
     
     # 4. Create payment record
     try:

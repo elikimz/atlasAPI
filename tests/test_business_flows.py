@@ -338,3 +338,30 @@ async def test_crypto_withdrawal_accounts_accept_only_bep20(
         json={"type": "crypto", "label": "Old Wallet", "address": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "network": "ERC20", "is_primary": False},
     )
     assert invalid.status_code == 422
+
+@pytest.mark.anyio
+async def test_crypto_withdrawal_minimum_is_three_dollars(
+    client: AsyncClient, test_db: AsyncSession, purchase_scenario: dict[str, models.User]
+) -> None:
+    purchaser = purchase_scenario["purchaser"]
+    plan = purchase_scenario["plan"]
+    purchaser.withdrawal_wallet_balance = 10.0
+    await test_db.commit()
+    headers = await login_header(client, purchaser.username)
+    purchase = await client.post(f"/plans/purchase/{plan.id}", headers=headers)
+    assert purchase.status_code == 200, purchase.text
+    password = await client.post("/settings/withdrawal-password", headers=headers, json={"new_password": "1234"})
+    assert password.status_code == 200, password.text
+    account = await client.post(
+        "/withdrawal-accounts",
+        headers=headers,
+        json={"type": "crypto", "label": "Crypto Wallet", "address": "0x1234567890abcdef1234567890abcdef12345678", "network": "BEP20", "is_primary": True},
+    )
+    assert account.status_code == 200, account.text
+    withdrawal = await client.post(
+        "/payments/withdraw",
+        headers=headers,
+        json={"amount": 2.99, "account_id": account.json()["id"], "password": "1234"},
+    )
+    assert withdrawal.status_code == 422
+    assert "minimum crypto withdrawal" in withdrawal.json()["detail"].lower()
