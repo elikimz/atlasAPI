@@ -512,6 +512,11 @@ async def add_withdrawal_account(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
+    if account_data.type.strip().lower() == "crypto" and (account_data.network or "").strip().upper() != "BEP20":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only BEP20 is supported for crypto withdrawal accounts.",
+        )
     # If this is primary, unset other primary accounts
     if account_data.is_primary:
         await db.execute(
@@ -647,6 +652,11 @@ async def request_withdrawal(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Withdrawal account not found")
+    if account.type.strip().lower() == "crypto" and (account.network or "").strip().upper() != "BEP20":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only BEP20 is supported for crypto withdrawals.",
+        )
     
     # 4. Create payment record
     try:

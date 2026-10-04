@@ -318,3 +318,23 @@ async def test_crypto_minimum_is_three_but_other_deposits_remain_twenty(
         json={"amount": 19.99, "payment_method": "Wise", "network": "Wise", "proof_url": "https://example.test/proof"},
     )
     assert below_other_minimum.status_code == 422
+
+@pytest.mark.anyio
+async def test_crypto_withdrawal_accounts_accept_only_bep20(
+    client: AsyncClient, purchase_scenario: dict[str, models.User]
+) -> None:
+    headers = await login_header(client, purchase_scenario["purchaser"].username)
+    valid = await client.post(
+        "/withdrawal-accounts",
+        headers=headers,
+        json={"type": "crypto", "label": "Crypto Wallet", "address": "0x1234567890abcdef1234567890abcdef12345678", "network": "BEP20", "is_primary": True},
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["network"] == "BEP20"
+
+    invalid = await client.post(
+        "/withdrawal-accounts",
+        headers=headers,
+        json={"type": "crypto", "label": "Old Wallet", "address": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "network": "ERC20", "is_primary": False},
+    )
+    assert invalid.status_code == 422
