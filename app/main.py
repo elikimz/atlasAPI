@@ -151,8 +151,9 @@ app = FastAPI(title=settings.PROJECT_NAME, version=settings.PROJECT_VERSION, lif
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
-    allow_credentials=True,
+    # The frontend authenticates with bearer tokens, not cross-site cookies.
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
