@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.models.models import User, VideoTask, Certification, Payment, Plan, ReferralCode, ReferralRelationship
 from app.routers.auth import get_current_admin_user, get_password_hash
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 import cloudinary
 import cloudinary.uploader
 import os
@@ -96,6 +96,16 @@ class UserUpdate(BaseModel):
     withdrawal_wallet_balance: float | None = None
     performance_bonus_balance: float | None = None
     referral_code: str | None = None
+
+class AdminPasswordResetRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=72)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_must_fit_bcrypt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 UTF-8 bytes.")
+        return value
 
 class PaymentUpdate(BaseModel):
     amount: float | None = None
@@ -431,6 +441,33 @@ async def reset_user_withdrawal_password(
     await db.commit()
     await db.refresh(user)
     return {"message": "User withdrawal password cleared successfully"}
+
+@router.post("/admin/users/{user_id}/password", response_model=dict)
+async def reset_user_password(
+    user_id: int,
+    password_data: AdminPasswordResetRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Set a new login password for a user who cannot access their account."""
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use your own account settings to change the administrator password.",
+        )
+
+    user.password_hash = get_password_hash(password_data.new_password)
+    # Force all existing refresh sessions to authenticate with the new password.
+    await db.execute(
+        text("UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = :user_id AND revoked_at IS NULL"),
+        {"user_id": user.id},
+    )
+    await db.commit()
+    return {"message": "User password updated successfully"}
 
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
