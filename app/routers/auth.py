@@ -2,6 +2,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import logging
 import random
+import hashlib
+import hmac
+import secrets
 import string
 import uuid
 
@@ -18,6 +21,7 @@ from app.config import settings
 from app.database.database import get_async_db
 from app.models import models
 from app.services.cache import invalidate_user_cache
+from app.services.email import send_password_reset_code_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -78,6 +82,30 @@ class RegisterFinal(BaseModel):
         if value is None or not value:
             return None
         return value.lower()
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class PasswordResetConfirm(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=8, max_length=72)
+
+    @field_validator("code")
+    @classmethod
+    def code_must_be_digits(cls, value: str) -> str:
+        if not value.isdigit():
+            raise ValueError("Reset code must contain six digits.")
+        return value
+
+    @field_validator("new_password")
+    @classmethod
+    def reset_password_must_fit_bcrypt(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > MAX_BCRYPT_PASSWORD_BYTES:
+            raise ValueError("Password must be at most 72 UTF-8 bytes.")
+        return value
 
 
 class Token(BaseModel):
@@ -243,6 +271,65 @@ async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_asyn
     if user.is_suspended:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your account has been suspended.")
     return await _issue_token_pair(user, db)
+
+
+@router.post("/auth/password-reset/request", response_model=dict)
+async def request_password_reset(payload: PasswordResetRequest, db: AsyncSession = Depends(get_async_db)) -> dict:
+    """Email a one-time reset code without revealing whether an address exists."""
+    normalized_email = payload.email.strip().lower()
+    result = await db.execute(select(models.User).filter(func.lower(models.User.email) == normalized_email))
+    user = result.scalar_one_or_none()
+    if user and user.email and "@" in user.email:
+        existing = await db.execute(
+            select(models.PasswordResetCode)
+            .filter(models.PasswordResetCode.user_id == user.id, models.PasswordResetCode.used_at.is_(None))
+            .order_by(models.PasswordResetCode.created_at.desc())
+        )
+        for old_code in existing.scalars().all():
+            old_code.used_at = _utc_now()
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        db.add(models.PasswordResetCode(
+            user_id=user.id,
+            code_hash=hashlib.sha256(code.encode()).hexdigest(),
+            expires_at=_utc_now() + timedelta(minutes=10),
+        ))
+        await db.commit()
+        await send_password_reset_code_email(recipient=user.email, first_name=user.first_name, code=code)
+    return {"message": "If an account exists for that email, a password reset code has been sent."}
+
+
+@router.post("/auth/password-reset/confirm", response_model=dict)
+async def confirm_password_reset(payload: PasswordResetConfirm, db: AsyncSession = Depends(get_async_db)) -> dict:
+    normalized_email = payload.email.strip().lower()
+    user_result = await db.execute(select(models.User).filter(func.lower(models.User.email) == normalized_email))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset code.")
+
+    code_result = await db.execute(
+        select(models.PasswordResetCode)
+        .filter(models.PasswordResetCode.user_id == user.id, models.PasswordResetCode.used_at.is_(None))
+        .order_by(models.PasswordResetCode.created_at.desc())
+    )
+    reset_code = code_result.scalars().first()
+    if not reset_code or reset_code.attempts >= 5 or _is_expired(reset_code.expires_at):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset code.")
+
+    reset_code.attempts += 1
+    expected_hash = hashlib.sha256(payload.code.encode()).hexdigest()
+    if not hmac.compare_digest(expected_hash, reset_code.code_hash):
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset code.")
+
+    reset_code.used_at = _utc_now()
+    user.password_hash = get_password_hash(payload.new_password)
+    refresh_result = await db.execute(
+        select(models.RefreshToken).filter(models.RefreshToken.user_id == user.id, models.RefreshToken.revoked_at.is_(None))
+    )
+    for refresh_token in refresh_result.scalars().all():
+        refresh_token.revoked_at = _utc_now()
+    await db.commit()
+    return {"message": "Password reset successfully. You can now log in with your new password."}
 
 
 @router.post("/auth/refresh", response_model=Token)

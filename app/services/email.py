@@ -176,3 +176,43 @@ async def send_withdrawal_request_received_email(
     except Exception:
         logger.exception("Could not send withdrawal received email to user %s", recipient)
         return False
+
+
+async def send_password_reset_code_email(
+    *,
+    recipient: str | None,
+    first_name: str | None,
+    code: str,
+) -> bool:
+    """Send a short-lived one-time password reset code."""
+    if not recipient or "@" not in recipient:
+        logger.warning("Skipping password reset email: user has no valid email address")
+        return False
+
+    name = escape((first_name or "there").strip() or "there")
+    safe_code = escape(code)
+    message = EmailMessage()
+    message["Subject"] = "Your AdPulseAI password reset code"
+    message["From"] = settings.EMAIL_SENDER or "AdPulseAI"
+    message["To"] = recipient
+    message.set_content(
+        f"Hello {name},\n\nYour AdPulseAI password reset code is: {code}\n\n"
+        "This code expires in 10 minutes and can be used only once. If you did not request this, you can ignore this email.\n\n"
+        "AdPulseAI Support"
+    )
+    message.add_alternative(
+        f"""<!doctype html><html lang="en"><body style="font-family:Arial,sans-serif;color:#1d2327;line-height:1.6;">
+        <h2 style="color:#2271b1;">AdPulseAI password reset</h2>
+        <p>Hello {name},</p><p>Use this code to set a new password:</p>
+        <p style="font-size:30px;font-weight:700;letter-spacing:8px;color:#2271b1;">{safe_code}</p>
+        <p>This code expires in <strong>10 minutes</strong> and can be used only once.</p>
+        <p>If you did not request this, you can ignore this email.</p></body></html>""",
+        subtype="html",
+    )
+    try:
+        await asyncio.to_thread(_send_sync, message)
+        logger.info("Password reset email sent to user %s", recipient)
+        return True
+    except Exception:
+        logger.exception("Could not send password reset email to user %s", recipient)
+        return False
