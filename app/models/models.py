@@ -43,6 +43,8 @@ class User(Base):
     plan_history = relationship("UserPlanHistory", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     upgrade_refunds = relationship("UpgradeRefund", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     earnings_logs = relationship("EarningsLog", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    commission_awards_received = relationship("CommissionAward", foreign_keys="CommissionAward.upline_user_id", back_populates="upline_user", cascade="all, delete-orphan", passive_deletes=True)
+    commission_awards_generated = relationship("CommissionAward", foreign_keys="CommissionAward.downline_user_id", back_populates="downline_user", cascade="all, delete-orphan", passive_deletes=True)
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     referral_relationship = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.user_id", back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     referrals_given = relationship("ReferralRelationship", foreign_keys="ReferralRelationship.referrer_id", back_populates="referrer", cascade="all, delete-orphan", passive_deletes=True)
@@ -233,6 +235,10 @@ class Plan(Base):
     description = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     is_upgrade_only = Column(Boolean, default=False) # New field
+    # Nullable until an administrator explicitly configures a membership rate.
+    # The commission engine falls back to the established tier baseline.
+    membership_level = Column(Integer, nullable=True)
+    membership_commission_rate = Column(Float, nullable=True)
 
 class UserPlanHistory(Base):
     __tablename__ = "user_plan_history"
@@ -325,6 +331,29 @@ class EarningsLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="earnings_logs")
+
+
+class CommissionAward(Base):
+    """Immutable audit record preventing duplicate referral payouts."""
+    __tablename__ = "commission_awards"
+    __table_args__ = (
+        Index("uq_commission_award_source_recipient_tier", "source_type", "source_id", "upline_user_id", "tier", unique=True),
+        Index("ix_commission_awards_upline_created", "upline_user_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_type = Column(String, nullable=False)  # plan_purchase | plan_upgrade | pesaflux_payment
+    source_id = Column(Integer, nullable=False)
+    downline_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    upline_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    tier = Column(Integer, nullable=False)
+    eligible_amount = Column(Float, nullable=False)
+    rate = Column(Float, nullable=False)
+    amount = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    downline_user = relationship("User", foreign_keys=[downline_user_id], back_populates="commission_awards_generated")
+    upline_user = relationship("User", foreign_keys=[upline_user_id], back_populates="commission_awards_received")
 
 
 class Notification(Base):

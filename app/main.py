@@ -104,12 +104,12 @@ async def seed_data() -> None:
     async with AsyncSessionLocal() as db:
         try:
             default_plans = [
-                {"name": "Intern", "price": 0.0, "daily_tasks_limit": 2, "validity_days": 3, "description": "Free Trial", "is_upgrade_only": False, "is_active": True},
-                {"name": "LV1", "price": 20.0, "daily_tasks_limit": 2, "validity_days": 60, "description": "Level 1 Plan", "is_upgrade_only": False, "is_active": True},
-                {"name": "LV2", "price": 50.0, "daily_tasks_limit": 5, "validity_days": 60, "description": "Level 2 Plan", "is_upgrade_only": False, "is_active": True},
-                {"name": "LV3", "price": 100.0, "daily_tasks_limit": 7, "validity_days": 60, "description": "Level 3 Plan", "is_upgrade_only": False, "is_active": True},
-                {"name": "LV4", "price": 150.0, "daily_tasks_limit": 10, "validity_days": 60, "description": "Level 4 Plan", "is_upgrade_only": False, "is_active": True},
-                {"name": "LV5", "price": 200.0, "daily_tasks_limit": 15, "validity_days": 60, "description": "Level 5 Plan", "is_upgrade_only": False, "is_active": True},
+                {"name": "Intern", "price": 0.0, "daily_tasks_limit": 2, "validity_days": 3, "description": "Free Trial", "is_upgrade_only": False, "is_active": True, "membership_level": 0},
+                {"name": "LV1", "price": 20.0, "daily_tasks_limit": 2, "validity_days": 60, "description": "Level 1 Plan", "is_upgrade_only": False, "is_active": True, "membership_level": 1},
+                {"name": "LV2", "price": 50.0, "daily_tasks_limit": 5, "validity_days": 60, "description": "Level 2 Plan", "is_upgrade_only": False, "is_active": True, "membership_level": 2},
+                {"name": "LV3", "price": 100.0, "daily_tasks_limit": 7, "validity_days": 60, "description": "Level 3 Plan", "is_upgrade_only": False, "is_active": True, "membership_level": 3},
+                {"name": "LV4", "price": 150.0, "daily_tasks_limit": 10, "validity_days": 60, "description": "Level 4 Plan", "is_upgrade_only": False, "is_active": True, "membership_level": 4},
+                {"name": "LV5", "price": 200.0, "daily_tasks_limit": 15, "validity_days": 60, "description": "Level 5 Plan", "is_upgrade_only": False, "is_active": True, "membership_level": 5},
             ]
             for plan_data in default_plans:
                 existing = await db.execute(select(models.Plan).filter(models.Plan.name == plan_data["name"]))

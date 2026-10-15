@@ -9,6 +9,7 @@ from app.models import models
 from app.schemas import plan as plan_schemas
 from app.routers.auth import get_current_user as get_current_active_user
 from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
+from app.services.referral_commissions import award_referral_commissions, money
 
 router = APIRouter(
     prefix="/plans",
@@ -56,6 +57,8 @@ async def get_all_plans(db: AsyncSession = Depends(get_async_db)):
                 "description": plan.description,
                 "is_active": plan.is_active,
                 "is_upgrade_only": plan.is_upgrade_only,
+                "membership_level": plan.membership_level,
+                "membership_commission_rate": plan.membership_commission_rate,
             }
             for plan in result.scalars().all()
         ]
@@ -122,77 +125,16 @@ async def purchase_plan(
     db.add(user_plan_history)
     db.add(current_user)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Multi-Tier Invite Commission Rule (CRITICAL):
-    # Commissions are generated ONLY on the INITIAL / first-time plan purchase.
-    # If has_purchased_first_package is already True this is a re-purchase after
-    # expiry and NO commission is generated (treat same as upgrade — skip).
-    # ─────────────────────────────────────────────────────────────────────────
+    # Referral commissions are generated only for the initial paid purchase.
+    affected_upline_ids: list[int] = []
     if not current_user.has_purchased_first_package and plan.price > 0:
         current_user.has_purchased_first_package = True
-
-        # 3-Tier Commission Split: Tier A (10%), Tier B (4%), Tier C (1%)
-        commission_config = [
-            ("tier_a_invite_earnings", 0.10),
-            ("tier_b_invite_earnings", 0.04),
-            ("tier_c_invite_earnings", 0.01),
-        ]
-
-        rel_result = await db.execute(
-            select(models.ReferralRelationship).filter(
-                models.ReferralRelationship.user_id == current_user.id
-            )
+        await db.flush()
+        awards = await award_referral_commissions(
+            db, downline=current_user, downline_plan=plan, eligible_amount=plan.price,
+            source_type="plan_purchase", source_id=user_plan_history.id,
         )
-        rel = rel_result.scalar_one_or_none()
-        current_upline_id = rel.referrer_id if rel else None
-        affected_upline_ids: list[int] = []
-
-        for field_name, percentage in commission_config:
-            if not current_upline_id:
-                break
-
-            upline_result = await db.execute(
-                select(models.User).filter(models.User.id == current_upline_id)
-            )
-            upline = upline_result.scalar_one_or_none()
-
-            if upline:
-                affected_upline_ids.append(upline.id)
-                commission_amount = plan.price * percentage
-                # Credit commission to upline's withdrawal wallet (cashable earnings)
-                upline.withdrawal_wallet_balance = (upline.withdrawal_wallet_balance or 0.0) + commission_amount
-
-                # Log to EarningsLog for GMT-based period calculations
-                db.add(models.EarningsLog(
-                    user_id=upline.id,
-                    amount=commission_amount,
-                    type="invite_commission",
-                    description=f"Invite commission from {current_user.email} (Tier {field_name.split('_')[1].upper()})"
-                ))
-
-                # Update upline's referral code stats
-                code_result = await db.execute(
-                    select(models.ReferralCode)
-                    .filter(models.ReferralCode.user_id == upline.id)
-                    .limit(1)
-                )
-                ref_code = code_result.scalar_one_or_none()
-                if ref_code:
-                    current_val = getattr(ref_code, field_name, 0.0) or 0.0
-                    setattr(ref_code, field_name, current_val + commission_amount)
-                    # Also update legacy total
-                    ref_code.earned_amount = (ref_code.earned_amount or 0.0) + commission_amount
-
-                # Move up to next tier
-                next_rel_result = await db.execute(
-                    select(models.ReferralRelationship).filter(
-                        models.ReferralRelationship.user_id == upline.id
-                    )
-                )
-                next_rel = next_rel_result.scalar_one_or_none()
-                current_upline_id = next_rel.referrer_id if next_rel else None
-            else:
-                break
+        affected_upline_ids = [award.upline_user_id for award in awards]
 
     # Intern receives only Intern tasks; all other plans receive global and plan-specific tasks.
     purchase_task_filter = (models.VideoTask.plan_id == plan.id) if plan.name.strip().lower() == "intern" else (models.VideoTask.plan_id.is_(None)) | (models.VideoTask.plan_id == plan.id)
@@ -220,7 +162,7 @@ async def purchase_plan(
     # A purchase changes the buyer's wallet, current plan, task assignment, and
     # potentially the wallet/referral aggregates of each upline.
     await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
-    for upline_id in locals().get("affected_upline_ids", []):
+    for upline_id in affected_upline_ids:
         await invalidate_user_cache(upline_id, "dashboard", "referrals", "payments")
     await invalidate_shared_cache("admin_stats")
 
@@ -374,6 +316,12 @@ async def upgrade_plan(
     )
     db.add(new_user_plan_history)
     db.add(current_user)
+    await db.flush()
+    upgrade_awards = await award_referral_commissions(
+        db, downline=current_user, downline_plan=new_plan,
+        eligible_amount=max(money(new_plan.price) - money(refund_amount), money(0)),
+        source_type="plan_upgrade", source_id=new_user_plan_history.id,
+    )
 
     # Clean up old plan's pending tasks
     await db.execute(
@@ -408,6 +356,8 @@ async def upgrade_plan(
     await db.refresh(new_user_plan_history)
 
     await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
+    for award in upgrade_awards:
+        await invalidate_user_cache(award.upline_user_id, "dashboard", "referrals", "payments")
     await invalidate_shared_cache("admin_stats")
 
     # Return user plan history along with updated user balances

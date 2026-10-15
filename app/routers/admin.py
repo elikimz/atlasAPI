@@ -52,6 +52,8 @@ class PlanCreate(BaseModel):
     description: str
     is_active: bool = True
     is_upgrade_only: bool = False
+    membership_level: int | None = None
+    membership_commission_rate: float | None = None
 
 class PlanUpdate(BaseModel):
     name: str | None = None
@@ -64,6 +66,8 @@ class PlanUpdate(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     is_upgrade_only: bool | None = None
+    membership_level: int | None = None
+    membership_commission_rate: float | None = None
 
 class CertificationCreate(BaseModel):
     name: str

@@ -14,6 +14,7 @@ from app.models.pesaflux_payment import PesaFluxPayment
 from app.routers.auth import get_current_user
 from app.services import pesaflux_service
 from app.services.cache import invalidate_shared_cache, invalidate_user_cache
+from app.services.referral_commissions import award_referral_commissions, money
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -651,6 +652,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
             
             # Record old plan for history if upgrading
             old_plan_id = user.current_plan_id
+            old_plan_price = 0.0
             now = _utc_now()
             
             # Mark old plan history as upgraded (parity with /plans/upgrade endpoint)
@@ -684,6 +686,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                 old_plan = old_plan_res.scalar_one_or_none()
                 if old_plan:
                     refund_amount = old_plan.price
+                    old_plan_price = old_plan.price
                     user.withdrawal_wallet_balance = (user.withdrawal_wallet_balance or 0.0) + refund_amount
                     # Log the refund to EarningsLog for period tracking
                     db.add(models.EarningsLog(
@@ -740,6 +743,19 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                 pesaflux_payment_id=payment.id
             )
             db.add(history)
+            await db.flush()
+
+            eligible_amount = plan.price if payment.payment_type == "purchase" else max(
+                money(plan.price) - money(old_plan_price), money(0)
+            )
+            await award_referral_commissions(
+                db,
+                downline=user,
+                downline_plan=plan,
+                eligible_amount=eligible_amount,
+                source_type="pesaflux_payment",
+                source_id=payment.id,
+            )
             
             # Mark as activated
             payment.plan_activated = "yes"

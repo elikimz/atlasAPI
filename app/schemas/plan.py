@@ -13,6 +13,8 @@ class PlanBase(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
     is_upgrade_only: bool = False
+    membership_level: Optional[int] = None
+    membership_commission_rate: Optional[float] = None
 
 class PlanCreate(PlanBase):
     pass

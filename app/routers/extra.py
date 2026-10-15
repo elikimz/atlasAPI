@@ -73,6 +73,19 @@ class InvitedUser(BaseModel):
     tier: str
     is_active: bool
 
+
+class CommissionHistoryEntry(BaseModel):
+    id: int
+    tier: int
+    amount: float
+    rate: float
+    eligible_amount: float
+    source_type: str
+    created_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
 @router.get("/referrals/summary", response_model=ReferralSummary)
 async def get_referral_summary(
     current_user: models.User = Depends(get_current_user),
@@ -214,6 +227,21 @@ async def get_active_referrals(
         print(f"Safe Active Referrals Error: {e}")
         
     return invited_users
+
+
+@router.get("/referrals/commissions", response_model=List[CommissionHistoryEntry])
+async def get_referral_commission_history(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    result = await db.execute(
+        select(models.CommissionAward)
+        .where(models.CommissionAward.upline_user_id == current_user.id)
+        .order_by(models.CommissionAward.created_at.desc(), models.CommissionAward.id.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 @router.get("/referrals/codes", response_model=List[ReferralCodeSchema])
 async def get_referral_codes(
