@@ -113,8 +113,15 @@ async def seed_data() -> None:
             ]
             for plan_data in default_plans:
                 existing = await db.execute(select(models.Plan).filter(models.Plan.name == plan_data["name"]))
-                if existing.scalar_one_or_none() is None:
+                existing_plan = existing.scalar_one_or_none()
+                if existing_plan is None:
                     db.add(models.Plan(**plan_data))
+                elif plan_data["name"] == "LV1" and existing_plan.membership_commission_rate is None:
+                    # Existing Azure databases may have received the new column
+                    # through startup schema repair without running Alembic's
+                    # data backfill. Restore only the explicitly confirmed LV1
+                    # rate; never invent LV2-LV5 rates here.
+                    existing_plan.membership_commission_rate = 0.10
 
             certification = await db.execute(
                 select(models.Certification).filter(models.Certification.name == "Video Reviewing Mastery")
