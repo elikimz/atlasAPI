@@ -197,8 +197,9 @@ async def upgrade_plan(
     Deposit Wallet Rule: the FULL price of the new plan is deducted from deposit_wallet_balance.
     The old plan price is refunded IMMEDIATELY to the Withdrawal Wallet.
 
-    Invite Commission Rule (CRITICAL):
-    - Plan upgrades NEVER generate invite commissions for the upline.
+    Invite Commission Rule:
+    - A qualifying successful upgrade generates membership-level commissions
+      using the applicable membership price for each upline.
     """
     result = await db.execute(select(models.Plan).filter(models.Plan.id == new_plan_id))
     new_plan = result.scalar_one_or_none()

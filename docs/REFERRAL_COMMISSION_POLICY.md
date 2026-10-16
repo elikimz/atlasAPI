@@ -1,60 +1,67 @@
 # AdPulseAI Referral Commission Policy
 
-## Baseline rates
+## Separate concepts
+
+- **Membership level** selects the applicable membership commission rate and price basis.
+- **Referral depth** selects the Tier A/B/C maximum ceiling.
+
+## Referral-depth ceilings
 
 - Tier A (direct): **10% maximum**
 - Tier B (second level): **4% maximum**
 - Tier C (third level): **1% maximum**
 
+These ceilings remain separate from membership-level rates.
+
 ## Membership policy
 
-Plans now support:
+Plans support:
 
-- `membership_level`: explicit hierarchy; existing names such as `LV1`–`LV5` are inferred when unset.
-- `membership_commission_rate`: optional decimal fraction, for example `0.08` means 8%.
+- `membership_level`: explicit hierarchy; names such as `LV1`–`LV5` are inferred only when unset.
+- `membership_commission_rate`: an explicitly configured decimal fraction, for example `0.10` means 10%.
 
-Until an administrator explicitly configures a membership rate, the established tier baseline remains active. This avoids silently changing existing payouts.
+The applicable membership plan is selected per upline/downline pair:
+
+- Downline is higher than upline: use the **upline membership plan**.
+- Same membership level: use the **downline membership plan**.
+- Upline is higher than downline: use the **downline membership plan**.
 
 The effective rate is:
 
 ```text
-effective_rate = min(tier_baseline, applicable_membership_rate)
+effective_rate = min(applicable_membership_rate, referral_depth_ceiling)
 ```
 
-The applicable membership rate is selected as follows:
+If the applicable plan has no configured membership rate, the engine **fails closed** and creates no commission. It never substitutes a referral-depth rate for a missing membership rate.
 
-- Downline is higher than upline: use the upline's rate.
-- Same membership level: use the downline's rate.
-- Upline is higher than downline: use the downline's rate.
+## Commission price basis
 
-The tier baseline is always the ceiling.
+For each upline, the commission base is the price of the applicable membership plan—not the provider amount, not the full upgrade price for every upline, and not the price difference.
 
-## Eligible transaction amount
+Examples:
 
-- Paid initial purchase: full verified plan amount.
-- Upgrade: `max(new plan price - previous eligible plan value, 0)`.
-- Renewals after the first paid purchase: no commission unless a future business rule explicitly enables them.
-- Free plans, failed payments, refunds, and zero-value transactions: no commission.
-- PesaFlux plan payments use the verified payment record and are processed through the same engine.
+- LV1 upline referring an LV2 purchase: 10% of LV1 $20 = **$2.00**.
+- Same-level LV1 referral: 10% of LV1 $20 = **$2.00**.
+- LV2 upline referring an LV1 purchase: 10% of LV1 $20 = **$2.00**.
 
-All amounts are rounded to cents using `ROUND_HALF_UP` before wallet crediting.
+## Qualifying transactions
+
+- Successful confirmed initial purchases and upgrades can generate commissions.
+- Renewals after the first paid purchase remain excluded unless explicitly enabled.
+- Free plans, failed payments, refunds, and zero-value transactions generate no commission.
+- PesaFlux plan payments use the verified successful payment record and the same commission engine.
+- Amounts are rounded to cents using `ROUND_HALF_UP` before wallet crediting.
+
+## Current configured rates
+
+- LV1 ($20): **10%**, explicitly configured.
+- LV2 ($50): **not configured**.
+- LV3 ($100): **not configured**.
+- LV4 ($150): **not configured**.
+- LV5 ($200): existing catalog entry left untouched; rate **not configured**.
+
+Payouts involving an applicable level without a configured rate are skipped rather than guessed.
 
 ## Idempotency and audit
 
-Each commission has an immutable `commission_awards` record keyed by source type, source ID, upline, and tier. A unique database index plus a savepoint protects against duplicate and concurrent callbacks. The record stores the eligible amount, effective rate, tier, recipient, and credited amount.
-
-## Examples using the seeded catalog
-
-With no membership-specific rates configured:
-
-- LV1 ($20) initial purchase:
-  - Tier A: $2.00
-  - Tier B: $0.80
-  - Tier C: $0.20
-- LV1 ($20) to LV3 ($100) upgrade:
-  - Eligible incremental amount: $80
-  - Tier A: $8.00
-  - Tier B: $3.20
-  - Tier C: $0.80
-
-These rates remain configurable from the admin plan editor and are capped by the tier baselines.
+Each commission has an immutable `commission_awards` record keyed by source type, source ID, upline, and referral tier. A unique database index prevents duplicate awards. The record stores the applicable price basis, effective rate, tier, recipient, and credited amount. Wallet and earnings-log updates happen in the same surrounding transaction.

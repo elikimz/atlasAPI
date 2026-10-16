@@ -69,6 +69,8 @@ async def purchase_scenario(test_db: AsyncSession):
         validity_days=30,
         description="Plan used solely by the business-flow regression test.",
         is_active=True,
+        membership_level=1,
+        membership_commission_rate=0.10,
     )
     reward_task = models.VideoTask(
         plan=starter_plan,
@@ -87,6 +89,7 @@ async def purchase_scenario(test_db: AsyncSession):
         is_trained=True,
         withdrawal_wallet_balance=0.0,
         referral_code="FLOWREF",
+        current_plan=starter_plan,
     )
     purchaser = models.User(
         username="flow_purchaser",
