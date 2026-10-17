@@ -124,7 +124,7 @@ class ReferralNetworkResponse(BaseModel):
     tiers: dict[str, NetworkTier]
 
 
-NETWORK_LEVELS = ("Intern", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Pro")
+NETWORK_LEVELS = ("Intern", "Level 1", "Level 2", "Level 3", "Level 4", "Pro")
 
 
 def _membership_label(plan: models.Plan | None) -> str:
@@ -135,11 +135,11 @@ def _membership_label(plan: models.Plan | None) -> str:
         return "Pro"
     level = plan.membership_level
     if level is None:
-        level_match = next((digit for digit in range(1, 6) if f"lv{digit}" in plan_name or f"level {digit}" in plan_name), None)
+        level_match = next((digit for digit in range(1, 5) if f"lv{digit}" in plan_name or f"level {digit}" in plan_name), None)
         level = level_match
     if level is None or level <= 0:
         return "Intern"
-    return f"Level {level}" if level <= 5 else "Pro"
+    return f"Level {level}" if level <= 4 else "Pro"
 
 
 async def _load_referral_network(current_user: models.User, db: AsyncSession) -> dict:

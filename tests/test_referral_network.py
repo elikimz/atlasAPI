@@ -101,3 +101,29 @@ async def test_referral_network_is_user_scoped_and_counts_each_member_once(db: A
         for tier in result["tiers"].values()
         for member in tier["members"]
     )
+
+
+@pytest.mark.anyio
+async def test_membership_breakdown_uses_only_requested_levels(db: AsyncSession) -> None:
+    root = models.User(username="root-levels", password_hash="x")
+    level_four = models.Plan(name="Level 4", price=250, membership_level=4, daily_tasks_limit=5, validity_days=60)
+    level_five = models.Plan(name="Level 5", price=500, membership_level=5, daily_tasks_limit=5, validity_days=60)
+    pro = models.Plan(name="Pro", price=1000, membership_level=6, daily_tasks_limit=5, validity_days=60)
+    members = [
+        models.User(username="level-four", password_hash="x", current_plan=level_four, plan_purchase_price=250, has_purchased_first_package=True),
+        models.User(username="level-five", password_hash="x", current_plan=level_five, plan_purchase_price=500, has_purchased_first_package=True),
+        models.User(username="pro", password_hash="x", current_plan=pro, plan_purchase_price=1000, has_purchased_first_package=True),
+    ]
+    db.add_all([root, level_four, level_five, pro, *members])
+    await db.flush()
+    db.add_all([models.ReferralRelationship(user_id=member.id, referrer_id=root.id) for member in members])
+    await db.flush()
+
+    result = await _load_referral_network(root, db)
+
+    assert [level["level"] for level in result["tiers"]["A"]["levels"]] == [
+        "Intern", "Level 1", "Level 2", "Level 3", "Level 4", "Pro"
+    ]
+    assert [member["membership_level"] for member in result["tiers"]["A"]["members"]] == [
+        "Level 4", "Pro", "Pro"
+    ]
