@@ -329,82 +329,77 @@ async def get_active_referrals(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    invited_users = []
-    
-    try:
-        # Helper to get status for a user
-        async def get_user_status_and_activity(user_id):
-            # Check if user has an active plan
-            plan_result = await db.execute(
-                select(models.UserPlanHistory).filter(
-                    models.UserPlanHistory.user_id == user_id,
-                    models.UserPlanHistory.status == "active",
-                    models.UserPlanHistory.expires_at > datetime.now(timezone.utc)
-                )
-            )
-            has_active_plan = plan_result.scalars().first() is not None
-            
-            task_result = await db.execute(
-                select(models.UserVideoTask).filter(
-                    models.UserVideoTask.user_id == user_id,
-                    models.UserVideoTask.status == "completed"
-                )
-            )
-            status = "Accepted" if task_result.scalars().first() else "Invite Sent"
-            return status, has_active_plan
+    """Return the first three referral levels without per-member queries.
 
-        # Tier A: Direct referrals (users referred by current_user)
-        result_a = await db.execute(
-            select(models.User)
-            .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-            .filter(models.ReferralRelationship.referrer_id == current_user.id)
-        )
-        tier_a_users = result_a.scalars().all()
-        
-        for u in tier_a_users:
-            status, is_active = await get_user_status_and_activity(u.id)
-            invited_users.append({
-                "name": f"{u.first_name or 'User'} {u.last_name or ''}".strip(), 
-                "status": status, 
-                "tier": "A",
-                "is_active": is_active
-            })
-            
-            # Tier B: Referrals of Tier A
-            result_b = await db.execute(
-                select(models.User)
-                .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-                .filter(models.ReferralRelationship.referrer_id == u.id)
+    The previous implementation queried plan history and completed tasks inside
+    nested loops. Large downlines therefore made the Invite page appear to
+    hang. Tier relationships are still traversed in order, but member activity
+    is now loaded with two set-based queries.
+    """
+    try:
+        members_by_tier: dict[str, list[models.User]] = {"A": [], "B": [], "C": []}
+        frontier = {current_user.id}
+        seen_user_ids = {current_user.id}
+
+        for tier in ("A", "B", "C"):
+            if not frontier:
+                break
+            relationship_result = await db.execute(
+                select(models.ReferralRelationship)
+                .where(models.ReferralRelationship.referrer_id.in_(frontier))
+                .order_by(models.ReferralRelationship.created_at.asc(), models.ReferralRelationship.id.asc())
             )
-            tier_b_users = result_b.scalars().all()
-            for ub in tier_b_users:
-                status_b, is_active_b = await get_user_status_and_activity(ub.id)
-                invited_users.append({
-                    "name": f"{ub.first_name or 'User'} {ub.last_name or ''}".strip(), 
-                    "status": status_b, 
-                    "tier": "B",
-                    "is_active": is_active_b
-                })
-                
-                # Tier C: Referrals of Tier B
-                result_c = await db.execute(
-                    select(models.User)
-                    .join(models.ReferralRelationship, models.User.id == models.ReferralRelationship.user_id)
-                    .filter(models.ReferralRelationship.referrer_id == ub.id)
-                )
-                tier_c_users = result_c.scalars().all()
-                for uc_user in tier_c_users:
-                    status_c, is_active_c = await get_user_status_and_activity(uc_user.id)
-                    invited_users.append({
-                        "name": f"{uc_user.first_name or 'User'} {uc_user.last_name or ''}".strip(), 
-                        "status": status_c, 
-                        "tier": "C",
-                        "is_active": is_active_c
-                    })
-    except Exception as e:
-        print(f"Safe Active Referrals Error: {e}")
-        
-    return invited_users
+            relationships = relationship_result.scalars().all()
+            user_ids = [relationship.user_id for relationship in relationships if relationship.user_id not in seen_user_ids]
+            if not user_ids:
+                frontier = set()
+                continue
+
+            users_result = await db.execute(select(models.User).where(models.User.id.in_(user_ids)))
+            users_by_id = {user.id: user for user in users_result.scalars().all()}
+            members = [users_by_id[user_id] for user_id in user_ids if user_id in users_by_id]
+            members_by_tier[tier] = members
+            seen_user_ids.update(user.id for user in members)
+            frontier = {user.id for user in members}
+
+        all_members = [user for tier in ("A", "B", "C") for user in members_by_tier[tier]]
+        all_member_ids = [user.id for user in all_members]
+        if not all_member_ids:
+            return []
+
+        now = datetime.now(timezone.utc)
+        active_plan_result = await db.execute(
+            select(models.UserPlanHistory.user_id)
+            .where(
+                models.UserPlanHistory.user_id.in_(all_member_ids),
+                models.UserPlanHistory.status == "active",
+                models.UserPlanHistory.expires_at > now,
+            )
+        )
+        active_plan_user_ids = set(active_plan_result.scalars().all())
+
+        completed_task_result = await db.execute(
+            select(models.UserVideoTask.user_id)
+            .where(
+                models.UserVideoTask.user_id.in_(all_member_ids),
+                models.UserVideoTask.status == "completed",
+            )
+        )
+        completed_task_user_ids = set(completed_task_result.scalars().all())
+
+        return [
+            {
+                "name": f"{user.first_name or 'User'} {user.last_name or ''}".strip(),
+                "status": "Accepted" if user.id in completed_task_user_ids else "Invite Sent",
+                "tier": tier,
+                "is_active": user.id in active_plan_user_ids,
+            }
+            for tier in ("A", "B", "C")
+            for user in members_by_tier[tier]
+        ]
+    except Exception as exc:
+        print(f"Safe Active Referrals Error: {exc}")
+        return []
 
 
 @router.get("/referrals/commissions", response_model=List[CommissionHistoryEntry])

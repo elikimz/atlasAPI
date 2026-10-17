@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import models
-from app.routers.extra import ReferralNetworkResponse, _load_referral_network
+from app.routers.extra import ReferralNetworkResponse, _load_referral_network, get_active_referrals
 
 
 @pytest.fixture
@@ -126,4 +126,40 @@ async def test_membership_breakdown_uses_only_requested_levels(db: AsyncSession)
     ]
     assert [member["membership_level"] for member in result["tiers"]["A"]["members"]] == [
         "Level 4", "Pro", "Pro"
+    ]
+
+
+@pytest.mark.anyio
+async def test_active_referrals_batches_activity_and_preserves_three_tiers(db: AsyncSession) -> None:
+    now = datetime.now(timezone.utc)
+    plan = models.Plan(name="LV1", price=20, membership_level=1, daily_tasks_limit=2, validity_days=60)
+    task = models.VideoTask(title="Referral task", video_url="https://example.com/video")
+    root = models.User(username="active-root", password_hash="x")
+    direct = models.User(username="active-direct", first_name="Direct", password_hash="x")
+    second = models.User(username="active-second", first_name="Second", password_hash="x")
+    third = models.User(username="active-third", first_name="Third", password_hash="x")
+    db.add_all([plan, task, root, direct, second, third])
+    await db.flush()
+
+    db.add_all([
+        models.ReferralRelationship(user_id=direct.id, referrer_id=root.id),
+        models.ReferralRelationship(user_id=second.id, referrer_id=direct.id),
+        models.ReferralRelationship(user_id=third.id, referrer_id=second.id),
+        models.UserPlanHistory(
+            user_id=direct.id,
+            plan_id=plan.id,
+            purchase_price=20,
+            expires_at=now + timedelta(days=30),
+            status="active",
+        ),
+        models.UserVideoTask(user_id=second.id, video_task_id=task.id, status="completed"),
+    ])
+    await db.flush()
+
+    result = await get_active_referrals(root, db)
+
+    assert result == [
+        {"name": "Direct", "status": "Invite Sent", "tier": "A", "is_active": True},
+        {"name": "Second", "status": "Accepted", "tier": "B", "is_active": False},
+        {"name": "Third", "status": "Invite Sent", "tier": "C", "is_active": False},
     ]
