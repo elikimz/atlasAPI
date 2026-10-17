@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, 
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
+from sqlalchemy.orm import selectinload
 from app.database.database import get_async_db
 from app.routers.auth import get_current_admin_user, get_current_user, get_password_hash, verify_password
 from app.models import models
@@ -72,6 +73,183 @@ class InvitedUser(BaseModel):
     status: str
     tier: str
     is_active: bool
+
+
+class NetworkMember(BaseModel):
+    id: int
+    name: str
+    username: str
+    member_id: str
+    tier: str
+    sponsor_name: str | None
+    sponsor_username: str | None
+    membership_level: str
+    plan_name: str | None
+    investment_status: str
+    amount_invested: float
+    registration_date: datetime | None
+    account_status: str
+    has_upgraded: bool
+
+
+class NetworkLevelStat(BaseModel):
+    level: str
+    total: int
+    invested: int
+
+
+class NetworkTier(BaseModel):
+    total: int
+    invested: int
+    not_invested: int
+    active: int
+    inactive: int
+    levels: List[NetworkLevelStat]
+    members: List[NetworkMember]
+
+
+class NetworkOverview(BaseModel):
+    total: int
+    invested: int
+    not_invested: int
+    active: int
+    inactive: int
+    tier_a: int
+    tier_b: int
+    tier_c: int
+
+
+class ReferralNetworkResponse(BaseModel):
+    overview: NetworkOverview
+    tiers: dict[str, NetworkTier]
+
+
+NETWORK_LEVELS = ("Intern", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Pro")
+
+
+def _membership_label(plan: models.Plan | None) -> str:
+    if not plan:
+        return "Intern"
+    plan_name = (plan.name or "").strip().lower()
+    if "pro" in plan_name:
+        return "Pro"
+    level = plan.membership_level
+    if level is None:
+        level_match = next((digit for digit in range(1, 6) if f"lv{digit}" in plan_name or f"level {digit}" in plan_name), None)
+        level = level_match
+    if level is None or level <= 0:
+        return "Intern"
+    return f"Level {level}" if level <= 5 else "Pro"
+
+
+async def _load_referral_network(current_user: models.User, db: AsyncSession) -> dict:
+    """Load exactly three user-scoped referral levels without counting a user twice."""
+    frontier = {current_user.id}
+    seen_user_ids: set[int] = {current_user.id}
+    members_by_tier: dict[str, list[models.User]] = {"A": [], "B": [], "C": []}
+    sponsors: dict[int, models.User] = {}
+
+    for tier in ("A", "B", "C"):
+        if not frontier:
+            break
+        result = await db.execute(
+            select(models.ReferralRelationship)
+            .options(
+                selectinload(models.ReferralRelationship.user).selectinload(models.User.current_plan),
+                selectinload(models.ReferralRelationship.user).selectinload(models.User.plan_history).selectinload(models.UserPlanHistory.plan),
+                selectinload(models.ReferralRelationship.referrer),
+            )
+            .where(models.ReferralRelationship.referrer_id.in_(frontier))
+            .order_by(models.ReferralRelationship.created_at.asc(), models.ReferralRelationship.id.asc())
+        )
+        next_frontier: set[int] = set()
+        for relationship in result.scalars().all():
+            user = relationship.user
+            if not user or user.id in seen_user_ids:
+                continue
+            seen_user_ids.add(user.id)
+            members_by_tier[tier].append(user)
+            sponsors[user.id] = relationship.referrer
+            next_frontier.add(user.id)
+        frontier = next_frontier
+
+    def serialized_member(user: models.User, tier: str) -> dict:
+        def history_sort_key(history: models.UserPlanHistory) -> datetime:
+            purchased_at = history.purchased_at
+            return purchased_at.replace(tzinfo=None) if purchased_at else datetime.min
+
+        histories = sorted(
+            [history for history in (user.plan_history or []) if (history.purchase_price or 0) > 0],
+            key=history_sort_key,
+            reverse=True,
+        )
+        latest_history = histories[0] if histories else None
+        plan = user.current_plan or (latest_history.plan if latest_history else None)
+        amount = float(user.plan_purchase_price or (latest_history.purchase_price if latest_history else 0) or 0)
+        invested = bool(user.has_purchased_first_package or amount > 0 or histories)
+        sponsor = sponsors.get(user.id)
+        return {
+            "id": user.id,
+            "name": f"{user.first_name or 'User'} {user.last_name or ''}".strip(),
+            "username": user.username,
+            "member_id": f"ADP-{user.id:06d}",
+            "tier": tier,
+            "sponsor_name": f"{sponsor.first_name or 'User'} {sponsor.last_name or ''}".strip() if sponsor else None,
+            "sponsor_username": sponsor.username if sponsor else None,
+            "membership_level": _membership_label(plan),
+            "plan_name": plan.name if plan else None,
+            "investment_status": "Invested" if invested else "Not invested",
+            "amount_invested": amount if invested else 0.0,
+            "registration_date": user.created_at,
+            "account_status": "Inactive" if user.is_suspended else "Active",
+            "has_upgraded": len(histories) > 1,
+        }
+
+    tiers: dict[str, dict] = {}
+    for tier, users in members_by_tier.items():
+        members = [serialized_member(user, tier) for user in users]
+        levels = [
+            {
+                "level": level,
+                "total": sum(member["membership_level"] == level for member in members),
+                "invested": sum(member["membership_level"] == level and member["investment_status"] == "Invested" for member in members),
+            }
+            for level in NETWORK_LEVELS
+        ]
+        tiers[tier] = {
+            "total": len(members),
+            "invested": sum(member["investment_status"] == "Invested" for member in members),
+            "not_invested": sum(member["investment_status"] != "Invested" for member in members),
+            "active": sum(member["account_status"] == "Active" for member in members),
+            "inactive": sum(member["account_status"] != "Active" for member in members),
+            "levels": levels,
+            "members": members,
+        }
+
+    total = sum(tier["total"] for tier in tiers.values())
+    invested = sum(tier["invested"] for tier in tiers.values())
+    active = sum(tier["active"] for tier in tiers.values())
+    return {
+        "overview": {
+            "total": total,
+            "invested": invested,
+            "not_invested": total - invested,
+            "active": active,
+            "inactive": total - active,
+            "tier_a": tiers["A"]["total"],
+            "tier_b": tiers["B"]["total"],
+            "tier_c": tiers["C"]["total"],
+        },
+        "tiers": tiers,
+    }
+
+
+@router.get("/referrals/network", response_model=ReferralNetworkResponse)
+async def get_referral_network(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    return await _load_referral_network(current_user, db)
 
 
 class CommissionHistoryEntry(BaseModel):

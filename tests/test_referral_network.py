@@ -1,0 +1,103 @@
+from datetime import datetime, timedelta, timezone
+from collections.abc import AsyncIterator
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.models import models
+from app.routers.extra import ReferralNetworkResponse, _load_referral_network
+
+
+@pytest.fixture
+async def db() -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(models.Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_referral_network_is_user_scoped_and_counts_each_member_once(db: AsyncSession) -> None:
+    now = datetime.now(timezone.utc)
+    intern = models.Plan(name="Intern", price=0, membership_level=0, daily_tasks_limit=2, validity_days=3)
+    lv1 = models.Plan(name="LV1", price=20, membership_level=1, daily_tasks_limit=2, validity_days=60)
+    lv2 = models.Plan(name="LV2", price=50, membership_level=2, daily_tasks_limit=5, validity_days=60)
+    lv3 = models.Plan(name="LV3", price=100, membership_level=3, daily_tasks_limit=7, validity_days=60)
+    root = models.User(username="root", first_name="Root", last_name="Member", password_hash="x")
+    direct = models.User(
+        username="direct",
+        first_name="Direct",
+        last_name="Member",
+        password_hash="x",
+        current_plan=lv1,
+        plan_purchase_price=20,
+        has_purchased_first_package=True,
+    )
+    second = models.User(username="second", first_name="Second", last_name="Member", password_hash="x")
+    third = models.User(
+        username="third",
+        first_name="Third",
+        last_name="Member",
+        password_hash="x",
+        current_plan=lv3,
+        plan_purchase_price=100,
+        has_purchased_first_package=True,
+        is_suspended=True,
+    )
+    outside = models.User(username="outside", password_hash="x")
+    db.add_all([intern, lv1, lv2, lv3, root, direct, second, third, outside])
+    await db.flush()
+
+    db.add_all([
+        models.ReferralRelationship(user_id=direct.id, referrer_id=root.id),
+        models.ReferralRelationship(user_id=second.id, referrer_id=direct.id),
+        models.ReferralRelationship(user_id=third.id, referrer_id=second.id),
+        models.ReferralRelationship(user_id=outside.id, referrer_id=outside.id),
+        models.UserPlanHistory(
+            user_id=direct.id,
+            plan_id=lv1.id,
+            purchase_price=20,
+            purchased_at=now - timedelta(days=10),
+            expires_at=now + timedelta(days=50),
+            status="upgraded",
+        ),
+        models.UserPlanHistory(
+            user_id=direct.id,
+            plan_id=lv2.id,
+            purchase_price=50,
+            purchased_at=now - timedelta(days=2),
+            expires_at=now + timedelta(days=58),
+            status="active",
+        ),
+    ])
+    await db.flush()
+
+    result = await _load_referral_network(root, db)
+    ReferralNetworkResponse.model_validate(result)
+
+    assert result["overview"] == {
+        "total": 3,
+        "invested": 2,
+        "not_invested": 1,
+        "active": 2,
+        "inactive": 1,
+        "tier_a": 1,
+        "tier_b": 1,
+        "tier_c": 1,
+    }
+    assert [member["username"] for member in result["tiers"]["A"]["members"]] == ["direct"]
+    assert result["tiers"]["A"]["members"][0]["membership_level"] == "Level 1"
+    assert result["tiers"]["A"]["members"][0]["has_upgraded"] is True
+    assert result["tiers"]["B"]["members"][0]["investment_status"] == "Not invested"
+    assert result["tiers"]["B"]["members"][0]["sponsor_username"] == "direct"
+    assert result["tiers"]["C"]["members"][0]["account_status"] == "Inactive"
+    assert result["tiers"]["C"]["members"][0]["membership_level"] == "Level 3"
+    assert result["tiers"]["A"]["levels"][1] == {"level": "Level 1", "total": 1, "invested": 1}
+    assert all(
+        member["username"] != "outside"
+        for tier in result["tiers"].values()
+        for member in tier["members"]
+    )
