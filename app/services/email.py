@@ -4,6 +4,7 @@ import asyncio
 import logging
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr
 from html import escape
 
 from app.config import settings
@@ -76,7 +77,7 @@ def _build_message(
 
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = settings.EMAIL_SENDER or "AdPulseAI"
+    message["From"] = formataddr((settings.EMAIL_SENDER_NAME, settings.EMAIL_SENDER)) if settings.EMAIL_SENDER else settings.EMAIL_SENDER_NAME
     message["To"] = recipient
     message.set_content("\n".join(text_lines))
     message.add_alternative(html, subtype="html")
@@ -86,10 +87,11 @@ def _build_message(
 def _send_sync(message: EmailMessage) -> None:
     if not settings.EMAIL_SENDER or not settings.EMAIL_APP_PASSWORD:
         raise RuntimeError("EMAIL_SENDER and EMAIL_APP_PASSWORD are required to send email")
+    smtp_username = settings.SMTP_USERNAME or settings.EMAIL_SENDER
 
     if settings.SMTP_PORT == 465:
         with smtplib.SMTP_SSL(settings.SMTP_SERVER, settings.SMTP_PORT, timeout=20) as smtp:
-            smtp.login(settings.EMAIL_SENDER, settings.EMAIL_APP_PASSWORD)
+            smtp.login(smtp_username, settings.EMAIL_APP_PASSWORD)
             smtp.send_message(message)
         return
 
@@ -97,7 +99,7 @@ def _send_sync(message: EmailMessage) -> None:
         smtp.ehlo()
         smtp.starttls()
         smtp.ehlo()
-        smtp.login(settings.EMAIL_SENDER, settings.EMAIL_APP_PASSWORD)
+        smtp.login(smtp_username, settings.EMAIL_APP_PASSWORD)
         smtp.send_message(message)
 
 
@@ -193,7 +195,7 @@ async def send_password_reset_code_email(
     safe_code = escape(code)
     message = EmailMessage()
     message["Subject"] = "Your AdPulseAI password reset code"
-    message["From"] = settings.EMAIL_SENDER or "AdPulseAI"
+    message["From"] = formataddr((settings.EMAIL_SENDER_NAME, settings.EMAIL_SENDER)) if settings.EMAIL_SENDER else settings.EMAIL_SENDER_NAME
     message["To"] = recipient
     message.set_content(
         f"Hello {name},\n\nYour AdPulseAI password reset code is: {code}\n\n"

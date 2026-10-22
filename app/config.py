@@ -35,6 +35,8 @@ class Settings:
 
     SMTP_SERVER: str = os.getenv("APPSETTING_SMTP_SERVER", "smtp.gmail.com") or os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("APPSETTING_SMTP_PORT", "587") or os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: str | None = os.getenv("APPSETTING_SMTP_USERNAME") or os.getenv("SMTP_USERNAME")
+    EMAIL_SENDER_NAME: str = os.getenv("APPSETTING_EMAIL_SENDER_NAME") or os.getenv("EMAIL_SENDER_NAME", "adpulseAI")
     EMAIL_SENDER: str | None = os.getenv("APPSETTING_EMAIL_SENDER") or os.getenv("EMAIL_SENDER")
     EMAIL_APP_PASSWORD: str | None = os.getenv("APPSETTING_EMAIL_APP_PASSWORD") or os.getenv("EMAIL_APP_PASSWORD")
 
