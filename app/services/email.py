@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import smtplib
+from pathlib import Path
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, make_msgid
 from html import escape
 
 from app.config import settings
@@ -198,19 +199,62 @@ async def send_password_reset_code_email(
     message["From"] = formataddr((settings.EMAIL_SENDER_NAME, settings.EMAIL_SENDER)) if settings.EMAIL_SENDER else settings.EMAIL_SENDER_NAME
     message["To"] = recipient
     message.set_content(
-        f"Hello {name},\n\nYour AdPulseAI password reset code is: {code}\n\n"
-        "This code expires in 10 minutes and can be used only once. If you did not request this, you can ignore this email.\n\n"
-        "AdPulseAI Support"
+        f"ADPULSEAI | PASSWORD RESET\n\nHello {first_name or 'there'},\n\n"
+        f"Your six-digit reset code is:\n\n{code}\n\n"
+        "Select and copy the code above. It expires in 10 minutes and can be used only once.\n\n"
+        "If you did not request this, you can ignore this email.\n\nAdPulseAI Support"
     )
-    message.add_alternative(
-        f"""<!doctype html><html lang="en"><body style="font-family:Arial,sans-serif;color:#1d2327;line-height:1.6;">
-        <h2 style="color:#2271b1;">AdPulseAI password reset</h2>
-        <p>Hello {name},</p><p>Use this code to set a new password:</p>
-        <p style="font-size:30px;font-weight:700;letter-spacing:8px;color:#2271b1;">{safe_code}</p>
-        <p>This code expires in <strong>10 minutes</strong> and can be used only once.</p>
-        <p>If you did not request this, you can ignore this email.</p></body></html>""",
-        subtype="html",
-    )
+    logo_cid = make_msgid(domain="adpulseai")
+    logo_src = f"cid:{logo_cid[1:-1]}"
+    html = f"""<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background-color:#edf2f8;color:#17243a;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#edf2f8;padding:28px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#ffffff;border:1px solid #dce5f0;border-radius:18px;overflow:hidden;">
+          <tr><td align="center" style="padding:28px 24px 24px;background-color:#10233f;">
+            <img src="{logo_src}" width="88" height="88" alt="AdPulseAI logo" style="display:block;width:88px;height:88px;border:0;border-radius:14px;" />
+            <p style="margin:14px 0 0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.3px;">AdPulseAI</p>
+            <p style="margin:5px 0 0;color:#b9d6f2;font-size:11px;font-weight:700;letter-spacing:2px;">ACCOUNT SECURITY</p>
+          </td></tr>
+          <tr><td style="padding:30px 28px 20px;">
+            <h1 style="margin:0 0 12px;color:#142640;font-size:24px;line-height:1.25;">Reset your password</h1>
+            <p style="margin:0 0 12px;color:#34445c;font-size:15px;line-height:1.6;">Hello {name},</p>
+            <p style="margin:0 0 22px;color:#52627a;font-size:14px;line-height:1.65;">Use this one-time code to securely reset your AdPulseAI password.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef6ff;border:1px solid #cfe2fb;border-radius:14px;">
+              <tr><td align="center" style="padding:22px 14px 18px;">
+                <p style="margin:0 0 10px;color:#50709a;font-size:11px;font-weight:700;letter-spacing:1.6px;">YOUR 6-DIGIT CODE</p>
+                <p style="margin:0;color:#1359a8;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:7px;line-height:1.3;">{safe_code}</p>
+                <p style="margin:12px 0 0;color:#48617e;font-size:12px;line-height:1.5;">Tap and hold the code, then choose <strong>Copy</strong>.</p>
+              </td></tr>
+            </table>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px;">
+              <tr><td style="padding:12px 14px;background-color:#fff8e8;border-left:3px solid #f0b429;border-radius:4px;color:#735b28;font-size:13px;line-height:1.55;">
+                This code expires in <strong>10 minutes</strong> and can be used only once.
+              </td></tr>
+            </table>
+            <p style="margin:20px 0 0;color:#718096;font-size:12px;line-height:1.6;">If you did not request a password reset, you can safely ignore this email. Your password will not change unless the code is used.</p>
+          </td></tr>
+          <tr><td align="center" style="padding:18px 24px;background-color:#f7f9fc;border-top:1px solid #e7edf4;color:#7a8799;font-size:11px;line-height:1.6;">
+            AdPulseAI Support<br />Automated account security message
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>"""
+    message.add_alternative(html, subtype="html")
+    html_part = message.get_body(preferencelist=("html",))
+    logo_path = Path(__file__).resolve().parent.parent / "assets" / "adpulseai-email-logo.jpg"
+    if html_part is not None and logo_path.is_file():
+        html_part.add_related(
+            logo_path.read_bytes(),
+            maintype="image",
+            subtype="jpeg",
+            cid=logo_cid,
+            disposition="inline",
+            filename=logo_path.name,
+        )
     try:
         await asyncio.to_thread(_send_sync, message)
         logger.info("Password reset email sent to user %s", recipient)

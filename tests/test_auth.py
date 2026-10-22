@@ -296,3 +296,15 @@ async def test_reset_email_uses_requested_sender_name_and_address(monkeypatch: p
     assert delivered is True
     assert str(captured_messages[0]["From"]) == "adpulseAI <support@adpulseaiglobaltech.site>"
     assert "123456" in captured_messages[0].get_body(preferencelist=("plain",)).get_content()
+    html_part = next(part for part in captured_messages[0].walk() if part.get_content_type() == "text/html")
+    html = html_part.get_content()
+    assert "123456" in html
+    assert "Tap and hold the code" in html
+    assert "cid:" in html
+    inline_logos = [
+        part
+        for part in captured_messages[0].walk()
+        if part.get_content_maintype() == "image" and part.get_content_disposition() == "inline"
+    ]
+    assert len(inline_logos) == 1
+    assert inline_logos[0].get_content_type() == "image/jpeg"
