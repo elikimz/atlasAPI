@@ -215,6 +215,22 @@ async def test_password_reset_code_flow_changes_password_and_rejects_invalid_or_
 
 
 @pytest.mark.anyio
+async def test_password_reset_reports_when_email_has_no_registered_account(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unexpected_delivery(**kwargs: object) -> bool:
+        pytest.fail("mail must not be attempted for an unregistered address")
+
+    monkeypatch.setattr(auth_router, "send_password_reset_code_email", unexpected_delivery)
+    response = await client.post(
+        "/auth/password-reset/request", json={"email": "unknown@example.invalid"}
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No account is registered with that email address."
+
+
+@pytest.mark.anyio
 async def test_password_reset_rejects_expired_code(
     client: AsyncClient,
     test_db: AsyncSession,
@@ -256,7 +272,8 @@ async def test_failed_reset_email_delivery_invalidates_code(
     response = await client.post(
         "/auth/password-reset/request", json={"email": registration_payload["email"]}
     )
-    assert response.status_code == 200
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The reset email could not be delivered. Please try again later."
     record = (await test_db.execute(select(PasswordResetCode))).scalars().one()
     assert record.used_at is not None
 

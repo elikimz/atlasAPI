@@ -275,31 +275,40 @@ async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_asyn
 
 @router.post("/auth/password-reset/request", response_model=dict)
 async def request_password_reset(payload: PasswordResetRequest, db: AsyncSession = Depends(get_async_db)) -> dict:
-    """Email a one-time reset code without revealing whether an address exists."""
+    """Email a one-time reset code to an existing account address."""
     normalized_email = payload.email.strip().lower()
     result = await db.execute(select(models.User).filter(func.lower(models.User.email) == normalized_email))
     user = result.scalar_one_or_none()
-    if user and user.email and "@" in user.email:
-        existing = await db.execute(
-            select(models.PasswordResetCode)
-            .filter(models.PasswordResetCode.user_id == user.id, models.PasswordResetCode.used_at.is_(None))
-            .order_by(models.PasswordResetCode.created_at.desc())
+    if not user or not user.email or "@" not in user.email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account is registered with that email address.",
         )
-        for old_code in existing.scalars().all():
-            old_code.used_at = _utc_now()
-        code = f"{secrets.randbelow(1_000_000):06d}"
-        reset_code = models.PasswordResetCode(
-            user_id=user.id,
-            code_hash=hashlib.sha256(code.encode()).hexdigest(),
-            expires_at=_utc_now() + timedelta(minutes=10),
-        )
-        db.add(reset_code)
+
+    existing = await db.execute(
+        select(models.PasswordResetCode)
+        .filter(models.PasswordResetCode.user_id == user.id, models.PasswordResetCode.used_at.is_(None))
+        .order_by(models.PasswordResetCode.created_at.desc())
+    )
+    for old_code in existing.scalars().all():
+        old_code.used_at = _utc_now()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    reset_code = models.PasswordResetCode(
+        user_id=user.id,
+        code_hash=hashlib.sha256(code.encode()).hexdigest(),
+        expires_at=_utc_now() + timedelta(minutes=10),
+    )
+    db.add(reset_code)
+    await db.commit()
+    delivered = await send_password_reset_code_email(recipient=user.email, first_name=user.first_name, code=code)
+    if not delivered:
+        reset_code.used_at = _utc_now()
         await db.commit()
-        delivered = await send_password_reset_code_email(recipient=user.email, first_name=user.first_name, code=code)
-        if not delivered:
-            reset_code.used_at = _utc_now()
-            await db.commit()
-    return {"message": "If an account exists for that email, a password reset code has been sent."}
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The reset email could not be delivered. Please try again later.",
+        )
+    return {"message": "A password reset code was sent to your registered email address."}
 
 
 @router.post("/auth/password-reset/confirm", response_model=dict)
