@@ -1,16 +1,21 @@
 """Regression coverage for the password-based authentication migration."""
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config import settings
 from app.database.database import get_async_db
 from app.main import app
-from app.models.models import Base, User
-from app.routers.auth import get_password_hash
+from app.models.models import Base, PasswordResetCode, User
+from app.routers import auth as auth_router
+from app.routers.auth import _utc_now, get_password_hash
+from app.services import email as email_service
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -152,3 +157,125 @@ async def test_password_validation_and_suspended_account(
     )
     assert suspended_login.status_code == 403
     assert "suspended" in suspended_login.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_password_reset_code_flow_changes_password_and_rejects_invalid_or_reused_code(
+    client: AsyncClient,
+    test_db: AsyncSession,
+    registration_payload: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_codes: list[str] = []
+
+    async def capture_reset_code(*, recipient: str | None, first_name: str | None, code: str) -> bool:
+        assert recipient == registration_payload["email"]
+        sent_codes.append(code)
+        return True
+
+    monkeypatch.setattr(auth_router, "send_password_reset_code_email", capture_reset_code)
+    registration = await client.post("/auth/register/final", json=registration_payload)
+    assert registration.status_code == 201
+
+    request = await client.post(
+        "/auth/password-reset/request", json={"email": registration_payload["email"]}
+    )
+    assert request.status_code == 200
+    assert sent_codes and len(sent_codes[0]) == 6 and sent_codes[0].isdigit()
+    reset_record = (await test_db.execute(select(PasswordResetCode))).scalars().one()
+    assert reset_record.code_hash != sent_codes[0]
+    assert not auth_router._is_expired(reset_record.expires_at)
+
+    invalid_code = ("0" if sent_codes[0][0] != "0" else "1") + sent_codes[0][1:]
+    invalid = await client.post(
+        "/auth/password-reset/confirm",
+        json={"email": registration_payload["email"], "code": invalid_code, "new_password": "new-secure-password"},
+    )
+    assert invalid.status_code == 400
+
+    confirmed = await client.post(
+        "/auth/password-reset/confirm",
+        json={"email": registration_payload["email"], "code": sent_codes[0], "new_password": "new-secure-password"},
+    )
+    assert confirmed.status_code == 200
+    reused = await client.post(
+        "/auth/password-reset/confirm",
+        json={"email": registration_payload["email"], "code": sent_codes[0], "new_password": "another-secure-password"},
+    )
+    assert reused.status_code == 400
+
+    old_password_login = await client.post(
+        "/auth/login", json={"username": registration_payload["email"], "password": registration_payload["password"]}
+    )
+    new_password_login = await client.post(
+        "/auth/login", json={"username": registration_payload["email"], "password": "new-secure-password"}
+    )
+    assert old_password_login.status_code == 401
+    assert new_password_login.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_password_reset_rejects_expired_code(
+    client: AsyncClient,
+    test_db: AsyncSession,
+    registration_payload: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_codes: list[str] = []
+
+    async def capture_reset_code(*, recipient: str | None, first_name: str | None, code: str) -> bool:
+        sent_codes.append(code)
+        return True
+
+    monkeypatch.setattr(auth_router, "send_password_reset_code_email", capture_reset_code)
+    await client.post("/auth/register/final", json=registration_payload)
+    await client.post("/auth/password-reset/request", json={"email": registration_payload["email"]})
+    record = (await test_db.execute(select(PasswordResetCode))).scalars().one()
+    record.expires_at = _utc_now() - timedelta(seconds=1)
+    await test_db.commit()
+
+    expired = await client.post(
+        "/auth/password-reset/confirm",
+        json={"email": registration_payload["email"], "code": sent_codes[0], "new_password": "new-secure-password"},
+    )
+    assert expired.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_failed_reset_email_delivery_invalidates_code(
+    client: AsyncClient,
+    test_db: AsyncSession,
+    registration_payload: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_delivery(**kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(auth_router, "send_password_reset_code_email", fail_delivery)
+    await client.post("/auth/register/final", json=registration_payload)
+    response = await client.post(
+        "/auth/password-reset/request", json={"email": registration_payload["email"]}
+    )
+    assert response.status_code == 200
+    record = (await test_db.execute(select(PasswordResetCode))).scalars().one()
+    assert record.used_at is not None
+
+
+@pytest.mark.anyio
+async def test_reset_email_uses_requested_sender_name_and_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_messages = []
+
+    def capture_message(message) -> None:
+        captured_messages.append(message)
+
+    monkeypatch.setattr(settings, "EMAIL_SENDER_NAME", "adpulseAI")
+    monkeypatch.setattr(settings, "EMAIL_SENDER", "support@adpulseaiglobaltech.site")
+    monkeypatch.setattr(email_service, "_send_sync", capture_message)
+
+    delivered = await email_service.send_password_reset_code_email(
+        recipient="test.user@example.com", first_name="Test", code="123456"
+    )
+
+    assert delivered is True
+    assert str(captured_messages[0]["From"]) == "adpulseAI <support@adpulseaiglobaltech.site>"
+    assert "123456" in captured_messages[0].get_body(preferencelist=("plain",)).get_content()

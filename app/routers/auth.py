@@ -288,13 +288,17 @@ async def request_password_reset(payload: PasswordResetRequest, db: AsyncSession
         for old_code in existing.scalars().all():
             old_code.used_at = _utc_now()
         code = f"{secrets.randbelow(1_000_000):06d}"
-        db.add(models.PasswordResetCode(
+        reset_code = models.PasswordResetCode(
             user_id=user.id,
             code_hash=hashlib.sha256(code.encode()).hexdigest(),
             expires_at=_utc_now() + timedelta(minutes=10),
-        ))
+        )
+        db.add(reset_code)
         await db.commit()
-        await send_password_reset_code_email(recipient=user.email, first_name=user.first_name, code=code)
+        delivered = await send_password_reset_code_email(recipient=user.email, first_name=user.first_name, code=code)
+        if not delivered:
+            reset_code.used_at = _utc_now()
+            await db.commit()
     return {"message": "If an account exists for that email, a password reset code has been sent."}
 
 
