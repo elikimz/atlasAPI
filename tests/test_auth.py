@@ -308,3 +308,36 @@ async def test_reset_email_uses_requested_sender_name_and_address(monkeypatch: p
     ]
     assert len(inline_logos) == 1
     assert inline_logos[0].get_content_type() == "image/jpeg"
+
+
+@pytest.mark.anyio
+async def test_minimal_registration_generates_username_and_allows_phone_or_email_login(
+    client: AsyncClient,
+    test_db: AsyncSession,
+) -> None:
+    phone_number = "+254712345678"
+    password = "safe-password-2026"
+    registration = await client.post(
+        "/auth/register/final",
+        json={
+            "phone_number": phone_number,
+            "email": "orbit.member@example.com",
+            "password": password,
+            "referral_code": "",
+        },
+    )
+    assert registration.status_code == 201
+    created = await test_db.execute(select(User).where(User.phone_number == phone_number))
+    user = created.scalar_one()
+    assert user.username.startswith("member_")
+    assert user.first_name is None
+    assert user.last_name is None
+
+    for identifier in (phone_number, "orbit.member@example.com"):
+        login = await client.post("/auth/login", json={"username": identifier, "password": password})
+        assert login.status_code == 200
+        profile = await client.get(
+            "/auth/me", headers={"Authorization": f"Bearer {login.json()['access_token']}"}
+        )
+        assert profile.status_code == 200
+        assert profile.json()["username"] == user.username

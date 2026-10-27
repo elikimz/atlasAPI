@@ -54,7 +54,8 @@ class LoginRequest(BaseModel):
 class RegisterFinal(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    username: str = Field(min_length=3, max_length=64)
+    # Username remains accepted for older clients; new signups only need phone/email.
+    username: Optional[str] = Field(default=None, min_length=3, max_length=64)
     password: str = Field(min_length=8)
     phone_number: str = Field(min_length=3, max_length=32)
     referral_code: Optional[str] = Field(default=None, max_length=64)
@@ -64,7 +65,9 @@ class RegisterFinal(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, value: str) -> str:
+    def validate_username(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
         if not value.replace("_", "").replace("-", "").isalnum():
             raise ValueError("Username may contain only letters, numbers, underscores, and hyphens.")
         return value
@@ -259,6 +262,7 @@ async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_asyn
         select(models.User).filter(
             (func.lower(models.User.username) == normalized_identifier)
             | (func.lower(models.User.email) == normalized_identifier)
+            | (models.User.phone_number == login_identifier)
         )
     )
     user = result.scalar_one_or_none()
@@ -409,11 +413,12 @@ async def logout(payload: RefreshRequest, db: AsyncSession = Depends(get_async_d
 async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_async_db)) -> dict:
     username = data.username
     try:
-        existing_username = await db.execute(
-            select(models.User).filter(func.lower(models.User.username) == username.lower())
-        )
-        if existing_username.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already registered")
+        if username:
+            existing_username = await db.execute(
+                select(models.User).filter(func.lower(models.User.username) == username.lower())
+            )
+            if existing_username.scalar_one_or_none():
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already registered")
 
         if data.email:
             existing_email = await db.execute(
@@ -428,6 +433,10 @@ async def register_final(data: RegisterFinal, db: AsyncSession = Depends(get_asy
             )
             if existing_phone.scalar_one_or_none():
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone number already registered")
+
+        if not username:
+            phone_digits = "".join(character for character in data.phone_number if character.isdigit())
+            username = f"member_{phone_digits[-12:]}_{uuid.uuid4().hex[:8]}"
 
         user = models.User(
             username=username,
