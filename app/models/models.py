@@ -92,6 +92,7 @@ class UserCertification(Base):
     __tablename__ = "user_certifications"
     __table_args__ = (
         Index("ix_user_certifications_user_status", "user_id", "status"),
+        Index("uq_user_certification_pair", "user_id", "certification_id", unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -210,12 +211,14 @@ class UserVideoTask(Base):
     __table_args__ = (
         Index("ix_user_video_tasks_user_status_completed", "user_id", "status", "completed_at"),
         Index("ix_user_video_tasks_user_video_task", "user_id", "video_task_id"),
+        Index("uq_user_video_task_pair", "user_id", "video_task_id", unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     video_task_id = Column(Integer, ForeignKey("video_tasks.id", ondelete="CASCADE"))
     status = Column(String, default="pending") # pending, completed, rejected
+    started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="video_tasks")
@@ -371,3 +374,18 @@ class Notification(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="notifications")
+
+
+class UserNotificationState(Base):
+    """Member-specific read/dismiss state for notifications shared globally."""
+    __tablename__ = "user_notification_states"
+    __table_args__ = (
+        Index("uq_user_notification_state_pair", "user_id", "notification_id", unique=True),
+        Index("ix_user_notification_states_user", "user_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="CASCADE"), nullable=False)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)

@@ -123,20 +123,6 @@ async def seed_data() -> None:
                     # rate; never invent LV2-LV5 rates here.
                     existing_plan.membership_commission_rate = 0.10
 
-            certification = await db.execute(
-                select(models.Certification).filter(models.Certification.name == "Video Reviewing Mastery")
-            )
-            if certification.scalar_one_or_none() is None:
-                db.add(
-                    models.Certification(
-                        name="Video Reviewing Mastery",
-                        description="Master the essentials of video assessment...",
-                        estimated_time="15 mins",
-                        video_url="https://res.cloudinary.com/demo/video/upload/dog.mp4",
-                        steps_count=1,
-                        is_active=True,
-                    )
-                )
             await db.commit()
         except Exception:
             await db.rollback()
@@ -176,4 +162,4 @@ app.include_router(pesaflux.router)
 
 @app.get("/")
 def root() -> dict:
-    return {"message": "AdPulseAI API is running"}
+    return {"message": "Kinetiq API is running"}

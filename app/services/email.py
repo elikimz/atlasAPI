@@ -40,7 +40,7 @@ def _build_message(
     ]
     if details and details.strip():
         text_lines.extend([f"Admin note: {details.strip()}"])
-    text_lines.extend(["", "Thank you,", "AdPulseAI Support"])
+    text_lines.extend(["", "Thank you,", "Kinetiq Support"])
 
     details_block = (
         f'<div style="margin:20px 0;padding:14px 16px;border-left:4px solid #{status_color};'
@@ -51,12 +51,12 @@ def _build_message(
     )
     html = f"""<!doctype html>
 <html lang="en">
-  <body style="margin:0;background:#f0f0f1;font-family:Arial,Helvetica,sans-serif;color:#1d2327;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f0f1;padding:32px 12px;">
+  <body style="margin:0;background:#F6F3EA;font-family:Arial,Helvetica,sans-serif;color:#182234;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F3EA;padding:32px 12px;">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dcdcde;">
-          <tr><td style="padding:24px 28px;background:#2271b1;color:#ffffff;">
-            <div style="font-size:22px;font-weight:700;letter-spacing:.2px;">AdPulseAI</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fffefa;border:1px solid #d5d3cb;">
+          <tr><td style="padding:24px 28px;background:#1746e8;color:#ffffff;">
+            <div style="font-size:22px;font-weight:700;letter-spacing:.2px;">Kinetiq</div>
             <div style="margin-top:4px;font-size:13px;opacity:.9;">{escape(title)}</div>
           </td></tr>
           <tr><td style="padding:28px;">
@@ -67,9 +67,9 @@ def _build_message(
               <tr><td style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:13px;color:#646970;">Status</td><td align="right" style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:14px;font-weight:700;color:#{status_color};">{safe_status}</td></tr>
             </table>
             {details_block}
-            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#646970;">If you did not request this, please contact AdPulseAI Support immediately.</p>
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#697487;">If you did not request this, please contact Kinetiq Support.</p>
           </td></tr>
-          <tr><td style="padding:18px 28px;border-top:1px solid #dcdcde;font-size:12px;color:#8c8f94;">© 2026 AdPulseAI. All rights reserved.</td></tr>
+          <tr><td style="padding:18px 28px;border-top:1px solid #d5d3cb;font-size:12px;color:#697487;">© 2026 Kinetiq. All rights reserved.</td></tr>
         </table>
       </td></tr>
     </table>
@@ -195,36 +195,36 @@ async def send_password_reset_code_email(
     name = escape((first_name or "there").strip() or "there")
     safe_code = escape(code)
     message = EmailMessage()
-    message["Subject"] = "Your AdPulseAI password reset code"
+    message["Subject"] = "Your Kinetiq password reset code"
     message["From"] = formataddr((settings.EMAIL_SENDER_NAME, settings.EMAIL_SENDER)) if settings.EMAIL_SENDER else settings.EMAIL_SENDER_NAME
     message["To"] = recipient
     message.set_content(
-        f"ADPULSEAI | PASSWORD RESET\n\nHello {first_name or 'there'},\n\n"
+        f"KINETIQ | PASSWORD RESET\n\nHello {first_name or 'there'},\n\n"
         f"Your six-digit reset code is:\n\n{code}\n\n"
         "Select and copy the code above. It expires in 10 minutes and can be used only once.\n\n"
-        "If you did not request this, you can ignore this email.\n\nAdPulseAI Support"
+        "If you did not request this, you can ignore this email.\n\nKinetiq Support"
     )
-    logo_cid = make_msgid(domain="adpulseai")
+    logo_cid = make_msgid(domain="kinetiq")
     logo_src = f"cid:{logo_cid[1:-1]}"
     html = f"""<!doctype html>
 <html lang="en">
-  <body style="margin:0;padding:0;background-color:#edf2f8;color:#17243a;font-family:Arial,Helvetica,sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#edf2f8;padding:28px 12px;">
+  <body style="margin:0;padding:0;background-color:#F6F3EA;color:#182234;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F6F3EA;padding:28px 12px;">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#ffffff;border:1px solid #dce5f0;border-radius:18px;overflow:hidden;">
-          <tr><td align="center" style="padding:28px 24px 24px;background-color:#10233f;">
-            <img src="{logo_src}" width="88" height="88" alt="AdPulseAI logo" style="display:block;width:88px;height:88px;border:0;border-radius:14px;" />
-            <p style="margin:14px 0 0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.3px;">AdPulseAI</p>
-            <p style="margin:5px 0 0;color:#b9d6f2;font-size:11px;font-weight:700;letter-spacing:2px;">ACCOUNT SECURITY</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#fffefa;border:1px solid #d5d3cb;border-radius:18px;overflow:hidden;">
+          <tr><td align="center" style="padding:28px 24px 24px;background-color:#182234;">
+            <img src="{logo_src}" width="88" height="88" alt="Kinetiq mark" style="display:block;width:88px;height:88px;border:0;border-radius:14px;" />
+            <p style="margin:14px 0 0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.3px;">Kinetiq</p>
+            <p style="margin:5px 0 0;color:#c3d0ff;font-size:11px;font-weight:700;letter-spacing:2px;">ACCOUNT SECURITY</p>
           </td></tr>
           <tr><td style="padding:30px 28px 20px;">
             <h1 style="margin:0 0 12px;color:#142640;font-size:24px;line-height:1.25;">Reset your password</h1>
             <p style="margin:0 0 12px;color:#34445c;font-size:15px;line-height:1.6;">Hello {name},</p>
-            <p style="margin:0 0 22px;color:#52627a;font-size:14px;line-height:1.65;">Use this one-time code to securely reset your AdPulseAI password.</p>
+            <p style="margin:0 0 22px;color:#435064;font-size:14px;line-height:1.65;">Use this one-time code to securely reset your Kinetiq password.</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef6ff;border:1px solid #cfe2fb;border-radius:14px;">
               <tr><td align="center" style="padding:22px 14px 18px;">
                 <p style="margin:0 0 10px;color:#50709a;font-size:11px;font-weight:700;letter-spacing:1.6px;">YOUR 6-DIGIT CODE</p>
-                <p style="margin:0;color:#1359a8;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:7px;line-height:1.3;">{safe_code}</p>
+              <p style="margin:0;color:#1746e8;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:7px;line-height:1.3;">{safe_code}</p>
                 <p style="margin:12px 0 0;color:#48617e;font-size:12px;line-height:1.5;">Tap and hold the code, then choose <strong>Copy</strong>.</p>
               </td></tr>
             </table>
@@ -236,7 +236,7 @@ async def send_password_reset_code_email(
             <p style="margin:20px 0 0;color:#718096;font-size:12px;line-height:1.6;">If you did not request a password reset, you can safely ignore this email. Your password will not change unless the code is used.</p>
           </td></tr>
           <tr><td align="center" style="padding:18px 24px;background-color:#f7f9fc;border-top:1px solid #e7edf4;color:#7a8799;font-size:11px;line-height:1.6;">
-            AdPulseAI Support<br />Automated account security message
+            Kinetiq Support<br />Automated account security message
           </td></tr>
         </table>
       </td></tr>
@@ -245,7 +245,7 @@ async def send_password_reset_code_email(
 </html>"""
     message.add_alternative(html, subtype="html")
     html_part = message.get_body(preferencelist=("html",))
-    logo_path = Path(__file__).resolve().parent.parent / "assets" / "adpulseai-email-logo.jpg"
+    logo_path = Path(__file__).resolve().parent.parent / "assets" / "kinetiq-email-logo.jpg"
     if html_part is not None and logo_path.is_file():
         html_part.add_related(
             logo_path.read_bytes(),

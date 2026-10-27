@@ -5,13 +5,14 @@ provider, user account, or production data is contacted.
 """
 
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 import statistics
 from time import perf_counter
 
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database.database import get_async_db
@@ -162,6 +163,25 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
     assert available.status_code == 200
     assert [entry["id"] for entry in available.json()] == [task.id]
 
+    before_start = await client.post("/tasks/complete", headers=headers, json={"video_task_id": task.id})
+    assert before_start.status_code == 409
+    assert "start this task" in before_start.json()["detail"].lower()
+
+    started = await client.post(f"/tasks/{task.id}/start", headers=headers)
+    assert started.status_code == 200, started.text
+    assert started.json()["required_session_seconds"] == 20
+    started_again = await client.post(f"/tasks/{task.id}/start", headers=headers)
+    assert started_again.status_code == 200
+    assert started_again.json()["started_at"] == started.json()["started_at"]
+    assigned_task = await test_db.scalar(
+        select(models.UserVideoTask).where(
+            models.UserVideoTask.user_id == purchaser.id,
+            models.UserVideoTask.video_task_id == task.id,
+        )
+    )
+    assigned_task.started_at = datetime.now(timezone.utc) - timedelta(seconds=21)
+    await test_db.commit()
+
     completed = await client.post("/tasks/complete", headers=headers, json={"video_task_id": task.id})
     assert completed.status_code == 200
     assert completed.json()["reward_amount"] == pytest.approx(3.5)
@@ -178,12 +198,136 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
     assert replay.status_code == 400
     assert "already completed" in replay.json()["detail"].lower()
 
+    await test_db.refresh(purchaser)
+    await test_db.refresh(referrer)
+    assert purchaser.withdrawal_wallet_balance == pytest.approx(3.5)
+    assert referrer.withdrawal_wallet_balance == pytest.approx(5.01)
     commission_logs = (await test_db.execute(
         select(models.EarningsLog).where(models.EarningsLog.user_id == referrer.id)
     )).scalars().all()
-    assert {(entry.type, entry.amount) for entry in commission_logs} == {
+    assert sorted((entry.type, entry.amount) for entry in commission_logs) == [
         ("invite_commission", 5.0),
         ("task_rebate", 0.01),
+    ]
+    task_logs = (await test_db.execute(
+        select(models.EarningsLog).where(
+            models.EarningsLog.user_id == purchaser.id,
+            models.EarningsLog.type == "task_reward",
+        )
+    )).scalars().all()
+    assert len(task_logs) == 1
+    assert task_logs[0].amount == pytest.approx(3.5)
+
+
+@pytest.mark.anyio
+async def test_plan_purchase_upgrade_eligibility_and_full_price_wallet_rules(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    base = models.Plan(name="Base regression", price=20.0, validity_days=30, is_active=True)
+    costly = models.Plan(name="Costly regression", price=60.0, validity_days=30, is_active=True)
+    upgrade_only = models.Plan(
+        name="Upgrade-only regression", price=80.0, validity_days=30,
+        is_active=True, is_upgrade_only=True,
+    )
+    test_db.add_all([base, costly, upgrade_only])
+    await test_db.flush()
+    now = datetime.now(timezone.utc)
+    expired = models.User(
+        username="expired_regression", password_hash=get_password_hash(TEST_PASSWORD),
+        current_plan_id=base.id, plan_expiry_date=now - timedelta(days=1),
+        plan_purchase_price=20.0, deposit_wallet_balance=100.0,
+    )
+    active = models.User(
+        username="active_regression", password_hash=get_password_hash(TEST_PASSWORD),
+        current_plan_id=base.id, plan_expiry_date=now + timedelta(days=10),
+        plan_purchase_price=20.0, deposit_wallet_balance=100.0,
+        withdrawal_wallet_balance=2.0,
+    )
+    lower = models.Plan(name="Lower regression", price=10.0, validity_days=30, is_active=True)
+    test_db.add_all([lower, expired, active])
+    await test_db.flush()
+    test_db.add_all([
+        models.UserPlanHistory(user_id=active.id, plan_id=base.id, purchase_price=20.0,
+                               expires_at=now + timedelta(days=10), status="active"),
+    ])
+    await test_db.commit()
+
+    no_plan = models.User(
+        username="new_regression", password_hash=get_password_hash(TEST_PASSWORD),
+        deposit_wallet_balance=100.0,
+    )
+    test_db.add(no_plan)
+    await test_db.commit()
+    new_headers = await login_header(client, no_plan.username)
+    rejected = await client.post(f"/plans/purchase/{upgrade_only.id}", headers=new_headers)
+    assert rejected.status_code == 400
+    assert "only as an upgrade" in rejected.json()["detail"]
+    assert await test_db.scalar(select(func.count(models.UserPlanHistory.id)).where(
+        models.UserPlanHistory.user_id == no_plan.id
+    )) == 0
+
+    expired_headers = await login_header(client, expired.username)
+    expired_upgrade = await client.post(f"/plans/upgrade/{costly.id}", headers=expired_headers)
+    assert expired_upgrade.status_code == 400
+    assert "expired" in expired_upgrade.json()["detail"].lower()
+    # Preserved expired-account rule: purchase must be strictly more expensive.
+    same_or_lower = await client.post(f"/plans/purchase/{base.id}", headers=expired_headers)
+    assert same_or_lower.status_code == 400
+    assert "higher tier" in same_or_lower.json()["detail"]
+    higher_purchase = await client.post(f"/plans/purchase/{costly.id}", headers=expired_headers)
+    assert higher_purchase.status_code == 200, higher_purchase.text
+    await test_db.refresh(expired)
+    assert expired.current_plan_id == costly.id
+    assert expired.deposit_wallet_balance == pytest.approx(40.0)
+
+    active_headers = await login_header(client, active.username)
+    lower_upgrade = await client.post(f"/plans/upgrade/{lower.id}", headers=active_headers)
+    assert lower_upgrade.status_code == 400
+    assert "higher tier" in lower_upgrade.json()["detail"]
+    active_purchase = await client.post(f"/plans/purchase/{costly.id}", headers=active_headers)
+    assert active_purchase.status_code == 400
+    assert "already has an active plan" in active_purchase.json()["detail"]
+    upgrade = await client.post(f"/plans/upgrade/{costly.id}", headers=active_headers)
+    assert upgrade.status_code == 200, upgrade.text
+    await test_db.refresh(active)
+    assert active.current_plan_id == costly.id
+    assert active.deposit_wallet_balance == pytest.approx(40.0)  # deduct full $60, not $40 net
+    assert active.withdrawal_wallet_balance == pytest.approx(22.0)  # $20 old-plan refund
+
+
+@pytest.mark.anyio
+async def test_legacy_trained_flag_does_not_complete_other_certifications_and_requires_start(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    user = models.User(
+        username="legacy_training_regression", password_hash=get_password_hash(TEST_PASSWORD),
+        is_trained=True,
+    )
+    first = models.Certification(name="Independent course A", is_active=True)
+    second = models.Certification(name="Independent course B", is_active=True)
+    test_db.add_all([user, first, second])
+    await test_db.commit()
+    headers = await login_header(client, user.username)
+
+    listed = await client.get("/training/certifications", headers=headers)
+    assert listed.status_code == 200
+    assert {item["id"]: item["status"] for item in listed.json()} == {
+        first.id: "available", second.id: "available",
+    }
+    complete_without_start = await client.post(
+        f"/training/certifications/{first.id}/complete", headers=headers
+    )
+    assert complete_without_start.status_code == 404
+    start = await client.post(f"/training/certifications/{first.id}/start", headers=headers)
+    assert start.status_code == 200
+    complete = await client.post(f"/training/certifications/{first.id}/complete", headers=headers)
+    assert complete.status_code == 200
+
+    refreshed = await client.get("/training/certifications", headers=headers)
+    assert {item["id"]: item["status"] for item in refreshed.json()} == {
+        first.id: "completed", second.id: "available",
     }
 
 
@@ -257,6 +401,19 @@ async def test_invite_flow_registers_and_lists_three_referral_tiers(
     root = await test_db.scalar(select(models.User).where(models.User.username == "invite_root"))
     root_code = await test_db.scalar(select(models.ReferralCode).where(models.ReferralCode.user_id == root.id))
     assert root_code is not None
+    # The explicit pure-read mode must not insert a referral code.
+    second_user = models.User(username="no_code_member", password_hash=get_password_hash(TEST_PASSWORD), referral_code=None)
+    test_db.add(second_user)
+    await test_db.commit()
+    second_headers = await login_header(client, second_user.username)
+    pure_read = await client.get("/referrals/codes?provision=false", headers=second_headers)
+    assert pure_read.status_code == 200 and pure_read.json() == []
+    assert await test_db.scalar(select(models.ReferralCode.id).where(models.ReferralCode.user_id == second_user.id)) is None
+    first_provision = await client.post("/referrals/codes/provision", headers=second_headers)
+    second_provision = await client.post("/referrals/codes/provision", headers=second_headers)
+    assert first_provision.status_code == second_provision.status_code == 200
+    assert first_provision.json() == second_provision.json()
+    assert await test_db.scalar(select(func.count(models.ReferralCode.id)).where(models.ReferralCode.user_id == second_user.id)) == 1
 
     await register("invite_child", "invite.child@example.test", "+254700000102", root_code.code)
     child = await test_db.scalar(select(models.User).where(models.User.username == "invite_child"))
@@ -401,3 +558,72 @@ async def test_admin_can_reset_user_withdrawal_password(
     await test_db.refresh(target)
     assert target.withdrawal_password is not None
     assert verify_password("new-withdrawal-password", target.withdrawal_password)
+
+
+@pytest.mark.anyio
+async def test_global_notification_read_and_dismiss_are_member_scoped(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    first = models.User(username="notice_first", password_hash=get_password_hash(TEST_PASSWORD))
+    second = models.User(username="notice_second", password_hash=get_password_hash(TEST_PASSWORD))
+    global_notice = models.Notification(user_id=None, title="Test notice", message="Shared content", type="info")
+    test_db.add_all([first, second, global_notice])
+    await test_db.commit()
+    first_headers = await login_header(client, first.username)
+    second_headers = await login_header(client, second.username)
+
+    first_initial = await client.get("/notifications", headers=first_headers)
+    second_initial = await client.get("/notifications", headers=second_headers)
+    assert first_initial.status_code == second_initial.status_code == 200
+    assert first_initial.json()[0]["is_read"] is False
+    assert second_initial.json()[0]["is_read"] is False
+
+    marked = await client.post(
+        "/notifications/mark-read",
+        headers=first_headers,
+        json={"notification_ids": [global_notice.id]},
+    )
+    assert marked.status_code == 200
+    first_read = await client.get("/notifications", headers=first_headers)
+    second_unread = await client.get("/notifications", headers=second_headers)
+    assert first_read.json()[0]["is_read"] is True
+    assert second_unread.json()[0]["is_read"] is False
+
+    dismissed = await client.delete(f"/notifications/{global_notice.id}", headers=first_headers)
+    assert dismissed.status_code == 200
+    first_after_dismiss = await client.get("/notifications", headers=first_headers)
+    second_after_dismiss = await client.get("/notifications", headers=second_headers)
+    assert first_after_dismiss.json() == []
+    assert second_after_dismiss.json()[0]["id"] == global_notice.id
+    assert second_after_dismiss.json()[0]["is_read"] is False
+    await test_db.refresh(global_notice)
+    assert global_notice.user_id is None
+    assert global_notice.is_read is False
+
+
+@pytest.mark.anyio
+async def test_payment_overview_counts_all_in_flight_states_without_fake_unpaid_zero(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    user = models.User(username="payment_overview_regression", password_hash=get_password_hash(TEST_PASSWORD))
+    test_db.add(user)
+    await test_db.flush()
+    test_db.add_all([
+        models.Payment(user_id=user.id, amount=10.0, period="Oct 2026", type="deposit", status="pending"),
+        models.Payment(user_id=user.id, amount=4.0, period="Oct 2026", type="payout", status="in_progress"),
+        models.Payment(user_id=user.id, amount=20.0, period="Oct 2026", type="deposit", status="paid"),
+        models.Payment(user_id=user.id, amount=3.0, period="Oct 2026", type="payout", status="paid"),
+        models.Payment(user_id=user.id, amount=99.0, period="Oct 2026", type="deposit", status="rejected"),
+    ])
+    await test_db.commit()
+    headers = await login_header(client, user.username)
+
+    response = await client.get("/payments/overview", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_paid": 23.0,
+        "previous_unpaid": None,
+        "current_pending": 14.0,
+        "pending_deposits": 10.0,
+        "pending_payouts": 4.0,
+    }

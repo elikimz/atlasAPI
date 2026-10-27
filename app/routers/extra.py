@@ -289,34 +289,26 @@ async def get_referral_summary(
                     models.User.current_plan_id.is_not(None),
                 )
             )
+            total_invites = total_invites_result.scalar() or 0
+            awards_result = await db.execute(select(models.CommissionAward).where(models.CommissionAward.upline_user_id == current_user.id))
+            awards = awards_result.scalars().all()
+            task_rebates = await db.scalar(select(func.coalesce(func.sum(models.EarningsLog.amount), 0.0)).where(models.EarningsLog.user_id == current_user.id, models.EarningsLog.type == "task_rebate"))
             return {
-                "earnings": sum((code.earned_amount or 0.0) for code in codes),
-                "users_referred": sum((code.signups_count or 0) for code in codes),
-                "task_rebate": sum((code.task_rebate_amount or 0.0) for code in codes),
-                "total_invites": total_invites_result.scalar() or 0,
+                "earnings": sum((award.amount or 0.0) for award in awards),
+                "users_referred": total_invites,
+                "task_rebate": float(task_rebates or 0.0),
+                "total_invites": total_invites,
                 "active_invites": active_invites_result.scalar() or 0,
-                "tier_a_invite_earnings": sum((code.tier_a_invite_earnings or 0.0) for code in codes),
-                "tier_b_invite_earnings": sum((code.tier_b_invite_earnings or 0.0) for code in codes),
-                "tier_c_invite_earnings": sum((code.tier_c_invite_earnings or 0.0) for code in codes),
+                "tier_a_invite_earnings": sum((award.amount or 0.0) for award in awards if award.tier == 1),
+                "tier_b_invite_earnings": sum((award.amount or 0.0) for award in awards if award.tier == 2),
+                "tier_c_invite_earnings": sum((award.amount or 0.0) for award in awards if award.tier == 3),
                 "tier_a_task_rebate": sum((code.tier_a_task_rebate or 0.0) for code in codes),
                 "tier_b_task_rebate": sum((code.tier_b_task_rebate or 0.0) for code in codes),
                 "tier_c_task_rebate": sum((code.tier_c_task_rebate or 0.0) for code in codes),
             }
         except Exception as exc:
-            print(f"Safe Referral Summary Error: {exc}")
-            return {
-                "earnings": 0.0,
-                "users_referred": 0,
-                "task_rebate": 0.0,
-                "total_invites": 0,
-                "active_invites": 0,
-                "tier_a_invite_earnings": 0.0,
-                "tier_b_invite_earnings": 0.0,
-                "tier_c_invite_earnings": 0.0,
-                "tier_a_task_rebate": 0.0,
-                "tier_b_task_rebate": 0.0,
-                "tier_c_task_rebate": 0.0,
-            }
+            print(f"Referral summary query failed: {exc}")
+            raise HTTPException(status_code=500, detail="Unable to load referral summary") from exc
 
     return await cache.get_or_set(
         CacheKeys.user_referral_summary(current_user.id),
@@ -398,8 +390,8 @@ async def get_active_referrals(
             for user in members_by_tier[tier]
         ]
     except Exception as exc:
-        print(f"Safe Active Referrals Error: {exc}")
-        return []
+        print(f"Active referrals query failed: {exc}")
+        raise HTTPException(status_code=500, detail="Unable to load referrals") from exc
 
 
 @router.get("/referrals/commissions", response_model=List[CommissionHistoryEntry])
@@ -418,6 +410,7 @@ async def get_referral_commission_history(
 
 @router.get("/referrals/codes", response_model=List[ReferralCodeSchema])
 async def get_referral_codes(
+    provision: bool = Query(default=True),
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ):
@@ -430,7 +423,7 @@ async def get_referral_codes(
 
             # Maintain the legacy lazily-created code behavior, then cache the
             # resulting representation only after the creation commit succeeds.
-            if not codes and current_user.referral_code:
+            if provision and not codes and current_user.referral_code:
                 new_code = models.ReferralCode(user_id=current_user.id, code=current_user.referral_code)
                 db.add(new_code)
                 await db.commit()
@@ -448,14 +441,42 @@ async def get_referral_codes(
                 for code in codes
             ]
         except Exception as exc:
-            print(f"Safe Referral Codes Error: {exc}")
-            return []
+            print(f"Referral code query failed: {exc}")
+            raise HTTPException(status_code=500, detail="Unable to load referral codes") from exc
 
     return await cache.get_or_set(
         CacheKeys.user_referral_codes(current_user.id),
         CacheTTL.REFERRALS,
         load_referral_codes,
     )
+
+@router.post("/referrals/codes/provision", response_model=ReferralCodeSchema)
+async def provision_referral_code(
+    current_user: models.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+):
+    result = await db.execute(select(models.ReferralCode).where(models.ReferralCode.user_id == current_user.id).order_by(models.ReferralCode.id.asc()))
+    existing = result.scalars().first()
+    if existing:
+        return {"code": existing.code, "signups": existing.signups_count or 0, "trained": existing.trained_count or 0, "earned": existing.earned_amount or 0.0, "task_rebate": existing.task_rebate_amount or 0.0}
+    if not current_user.referral_code:
+        import secrets, string
+        alphabet = string.ascii_uppercase + string.digits
+        current_user.referral_code = "".join(secrets.choice(alphabet) for _ in range(8))
+    new_code = models.ReferralCode(user_id=current_user.id, code=current_user.referral_code)
+    db.add(new_code)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        existing = await db.scalar(select(models.ReferralCode).where(models.ReferralCode.user_id == current_user.id).order_by(models.ReferralCode.id.asc()))
+        if existing:
+            return {"code": existing.code, "signups": existing.signups_count or 0, "trained": existing.trained_count or 0, "earned": existing.earned_amount or 0.0, "task_rebate": existing.task_rebate_amount or 0.0}
+        raise HTTPException(status_code=500, detail="Unable to provision referral code")
+    await db.refresh(new_code)
+    await invalidate_user_cache(current_user.id, "referrals", "dashboard")
+    return {"code": new_code.code, "signups": 0, "trained": 0, "earned": 0.0, "task_rebate": 0.0}
+
 
 @router.post("/referrals/codes", response_model=ReferralCodeSchema)
 async def create_referral_code(
@@ -485,8 +506,10 @@ async def create_referral_code(
 # --- Payments ---
 class PaymentOverview(BaseModel):
     total_paid: float
-    previous_unpaid: float
+    previous_unpaid: Optional[float] = None
     current_pending: float
+    pending_deposits: float = 0.0
+    pending_payouts: float = 0.0
 
 class PaymentHistorySchema(BaseModel):
     id: int
@@ -523,10 +546,14 @@ async def get_payment_overview(
             select(models.Payment).filter(models.Payment.user_id == current_user.id)
         )
         payments = result.scalars().all()
+        pending_statuses = {"pending", "under_review", "processing", "in_progress"}
+        pending = [payment for payment in payments if payment.status in pending_statuses]
         return {
             "total_paid": sum(payment.amount for payment in payments if payment.status == "paid"),
-            "previous_unpaid": 0.0,
-            "current_pending": sum(payment.amount for payment in payments if payment.status in ("pending", "under_review")),
+            "previous_unpaid": None,
+            "current_pending": sum(payment.amount for payment in pending),
+            "pending_deposits": sum(payment.amount for payment in pending if payment.type == "deposit"),
+            "pending_payouts": sum(payment.amount for payment in pending if payment.type in ("payout", "withdrawal")),
         }
 
     return await cache.get_or_set(
@@ -932,16 +959,14 @@ async def get_app_config(db: AsyncSession = Depends(get_async_db)):
     async def load_app_config() -> list[dict]:
         result = await db.execute(select(models.AppConfig))
         config_map = {config.key: config.value for config in result.scalars().all()}
-        default_keys = {
-            "telegram_link": "https://t.me/AdPulseAI",
-            "whatsapp_link": "https://chat.whatsapp.com/L1234567890",
-            "support_ticket_url": "https://help.adpulseai.com",
-            **DEFAULT_WITHDRAWAL_SCHEDULE,
-        }
-        return [
-            {"key": key, "value": config_map.get(key, default_value)}
-            for key, default_value in default_keys.items()
+        schedule = normalize_schedule(config_map)
+        schedule_entries = [{"key": key, "value": value} for key, value in schedule.items()]
+        configured_links = [
+            {"key": key, "value": config_map[key]}
+            for key in ("telegram_link", "whatsapp_link", "support_ticket_url")
+            if config_map.get(key)
         ]
+        return schedule_entries + configured_links
 
     return await cache.get_or_set(CacheKeys.app_config(), CacheTTL.APP_CONFIG, load_app_config)
 

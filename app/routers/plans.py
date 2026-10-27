@@ -83,6 +83,9 @@ async def purchase_plan(
     if not plan or not plan.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
+    if plan.is_upgrade_only:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This plan is available only as an upgrade.")
+
     if _plan_is_active(current_user):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -211,6 +214,9 @@ async def upgrade_plan(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No existing plan to upgrade from. Please purchase a plan first."
         )
+
+    if not _plan_is_active(current_user):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Your current plan is expired. Purchase an eligible plan instead.")
 
     result = await db.execute(
         select(models.Plan).filter(models.Plan.id == current_user.current_plan_id)

@@ -4,7 +4,8 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fpdf import FPDF
 
@@ -28,6 +29,8 @@ def _is_weekday_only_plan(plan: models.Plan | None) -> bool:
 def _tasks_available_today(plan: models.Plan | None) -> bool:
     return not _is_weekday_only_plan(plan) or datetime.now(timezone.utc).weekday() < 6
 
+TASK_SESSION_MIN_SECONDS = 20
+
 
 def _task_filter_for_plan(plan: models.Plan | None, plan_id: int | None):
     if _is_intern_plan(plan):
@@ -43,9 +46,14 @@ async def get_available_tasks(
 ):
     """Return a cached, user-scoped task queue with completed work excluded."""
     async def load_available_tasks() -> list[dict]:
+        if not current_user.current_plan_id:
+            return []
+        expiry = _as_utc(current_user.plan_expiry_date)
+        if expiry and expiry < datetime.now(timezone.utc):
+            return []
         plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
         plan = plan_result.scalar_one_or_none()
-        if not _tasks_available_today(plan):
+        if not plan or not _tasks_available_today(plan):
             return []
         task_filter = _task_filter_for_plan(plan, current_user.current_plan_id)
 
@@ -88,9 +96,14 @@ async def get_all_tasks(
 ):
     """Return all playable tasks using the same user-scoped cache namespace."""
     async def load_all_tasks() -> list[dict]:
+        if not current_user.current_plan_id:
+            return []
+        expiry = _as_utc(current_user.plan_expiry_date)
+        if expiry and expiry < datetime.now(timezone.utc):
+            return []
         plan_result = await db.execute(select(models.Plan).filter(models.Plan.id == current_user.current_plan_id))
         plan = plan_result.scalar_one_or_none()
-        if not _tasks_available_today(plan):
+        if not plan or not _tasks_available_today(plan):
             return []
         task_filter = _task_filter_for_plan(plan, current_user.current_plan_id)
 
@@ -120,6 +133,84 @@ async def get_all_tasks(
     )
 
 
+@router.post("/tasks/{task_id}/start", response_model=dict)
+async def start_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Persist the beginning of a task session; elapsed time is not proof of viewing."""
+    await db.execute(select(models.User.id).where(models.User.id == current_user.id).with_for_update())
+    if not current_user.current_plan_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No active plan found. Please purchase a plan to start tasks.")
+    expiry = _as_utc(current_user.plan_expiry_date)
+    if expiry and expiry < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your plan has expired. Please review eligible plans to continue.")
+    plan_result = await db.execute(select(models.Plan).where(models.Plan.id == current_user.current_plan_id))
+    plan = plan_result.scalar_one_or_none()
+    if not plan or not _tasks_available_today(plan):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tasks are not available for your current plan today.")
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    plan_start = _as_utc(current_user.plan_start_date) or today_start
+    count_since = max(today_start, plan_start)
+    daily_count = await db.scalar(
+        select(func.count(models.UserVideoTask.id)).where(
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.status == "completed",
+            models.UserVideoTask.completed_at >= count_since,
+        )
+    )
+    if daily_count and daily_count >= plan.daily_tasks_limit:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Daily task limit reached for your {plan.name} plan ({plan.daily_tasks_limit} tasks).")
+    task_result = await db.execute(
+        select(models.VideoTask).where(
+            models.VideoTask.id == task_id,
+            _task_filter_for_plan(plan, current_user.current_plan_id),
+        )
+    )
+    task = task_result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task is not available for your current plan.")
+    row_result = await db.execute(
+        select(models.UserVideoTask).where(
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.video_task_id == task_id,
+        )
+    )
+    task_state = row_result.scalar_one_or_none()
+    if task_state and task_state.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task already completed by user.")
+    if task_state and task_state.status == "rejected":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This task is not available for another session.")
+    now = datetime.now(timezone.utc)
+    if task_state is None:
+        task_state = models.UserVideoTask(user_id=current_user.id, video_task_id=task_id, status="pending", started_at=now)
+        db.add(task_state)
+    elif task_state.started_at is None:
+        task_state.started_at = now
+    try:
+        await db.commit()
+        await db.refresh(task_state)
+    except IntegrityError:
+        await db.rollback()
+        task_state = await db.scalar(
+            select(models.UserVideoTask).where(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.video_task_id == task_id,
+            )
+        )
+        if not task_state or not task_state.started_at or task_state.status == "completed":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task session could not be started.")
+    await invalidate_user_cache(current_user.id, "tasks", "dashboard")
+    return {
+        "task_id": task_id,
+        "started_at": _as_utc(task_state.started_at).isoformat(),
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "required_session_seconds": TASK_SESSION_MIN_SECONDS,
+        "message": "Task session started. Elapsed time is recorded; browser playback does not verify human viewing.",
+    }
+
+
 @router.post("/tasks/complete", status_code=status.HTTP_200_OK)
 async def complete_task(
     task_completion: UserTaskCompletion,
@@ -138,6 +229,11 @@ async def complete_task(
       to each upline's withdrawal_wallet_balance and referral code stats.
       Tier A: $0.01, Tier B: $0.005, Tier C: $0.0025
     """
+    # Serialize all completions for this member on databases that support row
+    # locks. The pair uniqueness constraint is the final duplicate guard.
+    await db.execute(
+        select(models.User.id).where(models.User.id == current_user.id).with_for_update()
+    )
     # 1. Check Plan Validity
     if not current_user.current_plan_id:
         raise HTTPException(
@@ -220,17 +316,31 @@ async def complete_task(
             detail="Task already completed by user"
         )
 
-    if not user_video_task:
-        user_video_task = models.UserVideoTask(
-            user_id=current_user.id,
-            video_task_id=video_task.id,
-            status="completed",
-            completed_at=datetime.now(timezone.utc)
+    if user_video_task is None or user_video_task.started_at is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Start this task before submitting it.")
+    now = datetime.now(timezone.utc)
+    started_at = _as_utc(user_video_task.started_at)
+    elapsed_seconds = (now - started_at).total_seconds()
+    if elapsed_seconds < TASK_SESSION_MIN_SECONDS:
+        remaining = max(1, int(TASK_SESSION_MIN_SECONDS - elapsed_seconds + 0.999))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Task session is still in progress. Wait {remaining} more seconds before submitting.")
+
+    # Claim the pending task with a conditional UPDATE before writing any money.
+    # This is the replay/concurrency guard where row locks are unsupported.
+    claim_result = await db.execute(
+        update(models.UserVideoTask)
+        .where(
+            models.UserVideoTask.id == user_video_task.id,
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.status == "pending",
+            models.UserVideoTask.started_at <= now - timedelta(seconds=TASK_SESSION_MIN_SECONDS),
         )
-        db.add(user_video_task)
-    else:
-        user_video_task.status = "completed"
-        user_video_task.completed_at = datetime.now(timezone.utc)
+        .values(status="completed", completed_at=now)
+    )
+    if claim_result.rowcount != 1:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task session was already submitted or is not ready.")
+    user_video_task.status = "completed"
+    user_video_task.completed_at = now
 
     # ─────────────────────────────────────────────────────────────────────────
     # Rule 1: Credit task reward to user's withdrawal wallet (cashable earnings)
@@ -345,11 +455,11 @@ def _as_utc(value: datetime | None) -> datetime | None:
 # --- Dashboard ---
 
 class DashboardSummary(BaseModel):
-    footage_labeled_min: float
+    footage_labeled_min: Optional[float]
     today_earnings: float
     this_week_earnings: float
     this_month_earnings: float
-    approved_roles: str
+    approved_roles: Optional[str]
     certifications_earned: int
     active_tasks: int
     completed_tasks: int
@@ -421,17 +531,13 @@ async def _build_dashboard_summary(
         this_month_earnings = await get_total_earnings_sum(month_start_gmt)
 
         # ── Certifications ────────────────────────────────────────────────────
-        try:
-            cert_result = await db.execute(
-                select(func.count(models.UserCertification.id)).filter(
-                    models.UserCertification.user_id == current_user.id,
-                    models.UserCertification.status == "completed"
-                )
+        cert_result = await db.execute(
+            select(func.count(models.UserCertification.id)).filter(
+                models.UserCertification.user_id == current_user.id,
+                models.UserCertification.status == "completed"
             )
-            completed_certs = cert_result.scalar() or 0
-        except Exception as e:
-            print(f"Error counting certifications: {e}")
-            completed_certs = 0
+        )
+        completed_certs = cert_result.scalar() or 0
 
         # ── Task counts ───────────────────────────────────────────────────────
         total_tasks_completed_result = await db.execute(
@@ -442,56 +548,45 @@ async def _build_dashboard_summary(
             )
         )
         total_tasks_completed = total_tasks_completed_result.scalar() or 0
-        footage_labeled_min = round((total_tasks_completed * 0.3) / 60, 2)
+        query = select(models.VideoTask).outerjoin(
+            models.UserVideoTask,
+            (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
+        ).filter(
+            (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
+        ).distinct()
+        all_tasks_result = await db.execute(query)
+        user_scoped_tasks = all_tasks_result.scalars().all()
 
-        user_scoped_tasks = []
-        try:
-            query = select(models.VideoTask).outerjoin(
-                models.UserVideoTask,
-                (models.UserVideoTask.video_task_id == models.VideoTask.id) & (models.UserVideoTask.user_id == current_user.id)
-            ).filter(
-                (models.VideoTask.plan_id == current_user.current_plan_id) | (models.UserVideoTask.id != None)
-            )
-            all_tasks_result = await db.execute(query)
-            user_scoped_tasks = all_tasks_result.scalars().all() or []
-        except Exception as e:
-            print(f"Error fetching tasks: {e}")
+        uvt_result = await db.execute(
+            select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
+        )
+        user_task_rows = uvt_result.scalars().all()
+        user_tasks = {uvt.video_task_id: uvt.status for uvt in user_task_rows}
 
-        user_tasks = {}
-        try:
-            uvt_result = await db.execute(
-                select(models.UserVideoTask).filter(models.UserVideoTask.user_id == current_user.id)
-            )
-            user_tasks = {uvt.video_task_id: uvt.status for uvt in (uvt_result.scalars().all() or [])}
-        except Exception as e:
-            print(f"Error fetching user tasks: {e}")
-
-        completed_tasks_count = sum(1 for s in user_tasks.values() if s == "completed")
-        active_tasks_count = max(0, len(user_scoped_tasks) - completed_tasks_count)
+        completed_tasks_count = sum(1 for uvt in user_task_rows if uvt.status == "completed")
+        active_tasks_count = sum(1 for task in user_scoped_tasks if user_tasks.get(task.id) != "completed")
         pending_videos_count = sum(1 for s in user_tasks.values() if s == "pending")
 
         # ── Recent activity ───────────────────────────────────────────────────
-        recent_activity = []
-        try:
-            recent_uvt_result = await db.execute(
-                select(models.UserVideoTask, models.VideoTask)
-                .join(models.VideoTask)
-                .filter(models.UserVideoTask.user_id == current_user.id)
-                .order_by(models.UserVideoTask.completed_at.desc())
-                .limit(5)
+        recent_uvt_result = await db.execute(
+            select(models.UserVideoTask, models.VideoTask)
+            .join(models.VideoTask)
+            .filter(
+                models.UserVideoTask.user_id == current_user.id,
+                models.UserVideoTask.status == "completed",
             )
-            for uvt, vt in recent_uvt_result.all():
-                try:
-                    recent_activity.append({
-                        "id": uvt.id,
-                        "description": f"Completed: {vt.title}",
-                        "amount": f"+ ${vt.reward_amount:.2f}",
-                        "status": uvt.status.capitalize()
-                    })
-                except Exception as e:
-                    print(f"Error processing activity: {e}")
-        except Exception as e:
-            print(f"Error fetching recent activity: {e}")
+            .order_by(models.UserVideoTask.completed_at.desc(), models.UserVideoTask.id.desc())
+            .limit(5)
+        )
+        recent_activity = [
+            {
+                "id": uvt.id,
+                "description": f"Completed: {vt.title}",
+                "amount": f"+ ${vt.reward_amount:.2f}",
+                "status": "Completed",
+            }
+            for uvt, vt in recent_uvt_result.all()
+        ]
 
         # ── Earnings breakdown ────────────────────────────────────────────────
         # Rule: Total Earnings MUST exclude recharge/deposit amounts.
@@ -508,16 +603,22 @@ async def _build_dashboard_summary(
         )
         task_earnings = task_earnings_res.scalar() or 0.0
 
-        # 2. Multi-Tier Invite Commissions (from referral code records)
-        ref_code_query = select(models.ReferralCode).filter(
-            models.ReferralCode.user_id == current_user.id
+        # 2. Multi-Tier Invite Commissions come from the immutable award ledger.
+        commission_res = await db.execute(
+            select(func.sum(models.CommissionAward.amount)).where(
+                models.CommissionAward.upline_user_id == current_user.id
+            )
         )
-        ref_codes_res = await db.execute(ref_code_query)
-        ref_codes = ref_codes_res.scalars().all()
-        referral_commission = sum(getattr(c, "earned_amount", 0.0) or 0.0 for c in ref_codes)
+        referral_commission = commission_res.scalar() or 0.0
 
-        # 3. Multi-Tier Task Rebates (from downline task completions)
-        task_rebate_commission = sum(getattr(c, "task_rebate_amount", 0.0) or 0.0 for c in ref_codes)
+        # 3. Multi-Tier Task Rebates come from the posted earnings ledger.
+        rebate_res = await db.execute(
+            select(func.sum(models.EarningsLog.amount)).where(
+                models.EarningsLog.user_id == current_user.id,
+                models.EarningsLog.type == "task_rebate",
+            )
+        )
+        task_rebate_commission = rebate_res.scalar() or 0.0
 
         # 4. Released Upgrade Refunds (post 72-hour lock — these are now cashable)
         #    Only 'released' records count toward Total Earnings.
@@ -566,11 +667,11 @@ async def _build_dashboard_summary(
             earnings_history.append({"day": days_map[day_start.weekday()], "value": float(daily_sum)})
 
         return {
-            "footage_labeled_min": footage_labeled_min,
+            "footage_labeled_min": None,
             "today_earnings": today_earnings,
             "this_week_earnings": this_week_earnings,
             "this_month_earnings": this_month_earnings,
-            "approved_roles": "None yet",
+            "approved_roles": None,
             "certifications_earned": completed_certs,
             "active_tasks": active_tasks_count,
             "completed_tasks": completed_tasks_count,
@@ -587,26 +688,8 @@ async def _build_dashboard_summary(
         }
     except Exception as e:
         print(f"Fatal error in dashboard summary: {e}")
-        return {
-            "footage_labeled_min": 0.0,
-            "today_earnings": 0.0,
-            "this_week_earnings": 0.0,
-            "this_month_earnings": 0.0,
-            "approved_roles": "None yet",
-            "certifications_earned": 0,
-            "active_tasks": 0,
-            "completed_tasks": 0,
-            "pending_videos": 0,
-            "recent_activity": [],
-            "earnings_history": [],
-            "total_tasks_completed": 0,
-            "total_earnings": 0.0,
-            "task_earnings": 0.0,
-            "referral_commission": 0.0,
-            "task_rebate_commission": 0.0,
-            "bonus_refunded": 0.0,
-            "pending_refund": 0.0,
-        }
+        raise HTTPException(status_code=500, detail="Unable to load dashboard summary") from e
+
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummary)
@@ -628,7 +711,7 @@ async def get_certifications(
     db: AsyncSession = Depends(get_async_db)
 ):
     try:
-        result = await db.execute(select(models.Certification))
+        result = await db.execute(select(models.Certification).where(models.Certification.is_active.is_(True)))
         all_certs = result.scalars().all()
 
         uc_result = await db.execute(
@@ -636,31 +719,22 @@ async def get_certifications(
         )
         user_certs = {uc.certification_id: uc.status for uc in uc_result.scalars().all()}
 
-        fallback_video_url = "https://www.youtube.com/embed/dQw4w9WgXcQ"
-        try:
-            video_result = await db.execute(select(models.VideoTask).limit(1))
-            fallback_video = video_result.scalars().first()
-            if fallback_video and hasattr(fallback_video, 'video_url'):
-                fallback_video_url = fallback_video.video_url
-        except Exception as e:
-            print(f"Error fetching fallback video: {e}")
-
         response = []
         for cert in all_certs:
-            cert_status = "completed" if current_user.is_trained else user_certs.get(cert.id, "available")
+            cert_status = user_certs.get(cert.id, "available")  # legacy flag has no course identity
             response.append({
                 "id": cert.id,
                 "name": cert.name,
-                "description": cert.description or "",
-                "estimated_time": cert.estimated_time or "5 min",
-                "video_url": (cert.video_url if hasattr(cert, 'video_url') and cert.video_url else fallback_video_url),
+                "description": cert.description,
+                "estimated_time": cert.estimated_time,
+                "video_url": cert.video_url,
                 "status": cert_status
             })
 
         return response
     except Exception as e:
         print(f"Error in get_certifications: {e}")
-        return []
+        raise HTTPException(status_code=500, detail="Unable to load certifications") from e
 
 
 @router.post("/training/certifications/{id}/start", response_model=dict)
@@ -669,16 +743,10 @@ async def start_certification(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    if current_user.is_trained:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Training already completed. Please download your certificate."
-        )
-
     cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
     cert = cert_result.scalar_one_or_none()
 
-    if not cert:
+    if not cert or not cert.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Certification not found")
 
     uc_result = await db.execute(
@@ -695,7 +763,14 @@ async def start_certification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Certification already completed. Please download your certificate."
             )
-        return {"message": f"Certification already {user_cert.status}"}
+        if user_cert.status == "in_progress":
+            return {"message": "Certification already in progress"}
+        if user_cert.status != "available":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Certification cannot be started from its current state.")
+        user_cert.status = "in_progress"
+        user_cert.started_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"message": "Certification started"}
 
     new_user_cert = models.UserCertification(
         user_id=current_user.id,
@@ -724,7 +799,7 @@ async def complete_certification(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id))
+    cert_result = await db.execute(select(models.Certification).filter(models.Certification.id == id, models.Certification.is_active.is_(True)))
     cert = cert_result.scalar_one_or_none()
 
     if not cert:
@@ -741,6 +816,10 @@ async def complete_certification(
     if not user_cert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User certification not found")
 
+    if user_cert.status == "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Certification already completed")
+    if user_cert.status != "in_progress":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Start this certification before completing it")
     user_cert.status = "completed"
     user_cert.completed_at = datetime.now(timezone.utc)
     current_user.is_trained = True
@@ -766,19 +845,19 @@ async def get_certificate(
     pdf.set_fill_color(250, 251, 255)
     pdf.rect(0, 0, 297, 210, 'F')
 
-    pdf.set_draw_color(89, 50, 234)
+    pdf.set_draw_color(23, 70, 232)
     pdf.set_line_width(2)
     pdf.rect(10, 10, 277, 190)
     pdf.set_line_width(0.5)
     pdf.rect(13, 13, 271, 184)
 
     pdf.set_font('Arial', 'B', 24)
-    pdf.set_text_color(15, 23, 42)
+    pdf.set_text_color(24, 34, 52)
     pdf.set_xy(0, 30)
-    pdf.cell(297, 10, 'AdPulseAI', align='C')
+    pdf.cell(297, 10, 'Kinetiq', align='C')
 
     pdf.set_font('Arial', 'B', 40)
-    pdf.set_text_color(89, 50, 234)
+    pdf.set_text_color(23, 70, 232)
     pdf.set_xy(0, 60)
     pdf.cell(297, 20, 'CERTIFICATE OF COMPLETION', align='C')
 
@@ -789,10 +868,10 @@ async def get_certificate(
 
     first = current_user.first_name or ""
     last = current_user.last_name or ""
-    user_name = f"{first} {last}".strip() or current_user.email or "AdPulseAI User"
+    user_name = f"{first} {last}".strip() or current_user.email or "Kinetiq Member"
 
     pdf.set_font('Arial', 'B', 32)
-    pdf.set_text_color(15, 23, 42)
+    pdf.set_text_color(24, 34, 52)
     pdf.set_xy(0, 105)
     pdf.cell(297, 15, user_name.upper(), align='C')
 
@@ -807,7 +886,7 @@ async def get_certificate(
     completion_date = datetime.now().strftime("%B %d, %Y")
 
     pdf.set_font('Arial', 'B', 12)
-    pdf.set_text_color(15, 23, 42)
+    pdf.set_text_color(24, 34, 52)
     pdf.set_xy(60, 170)
     pdf.cell(50, 5, completion_date, align='C')
     pdf.set_font('Arial', '', 10)
@@ -817,9 +896,9 @@ async def get_certificate(
     pdf.line(60, 168, 110, 168)
 
     pdf.set_font('Arial', 'B', 12)
-    pdf.set_text_color(15, 23, 42)
+    pdf.set_text_color(24, 34, 52)
     pdf.set_xy(187, 170)
-    pdf.cell(50, 5, 'AdPulseAI Certification Board', align='C')
+    pdf.cell(50, 5, 'Kinetiq Certification Board', align='C')
     pdf.set_font('Arial', '', 10)
     pdf.set_text_color(100, 116, 139)
     pdf.set_xy(187, 175)
@@ -827,7 +906,7 @@ async def get_certificate(
     pdf.line(187, 168, 237, 168)
 
     try:
-        pdf.set_fill_color(89, 50, 234)
+        pdf.set_fill_color(23, 70, 232)
         pdf.ellipse(148.5 - 15, 175 - 15, 30, 30, 'F')
         pdf.set_text_color(255, 255, 255)
         pdf.set_font('Arial', 'B', 8)
@@ -858,7 +937,7 @@ async def get_certificate(
         content=pdf_output,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=AdPulseAI_Certificate_{safe_last_name}.pdf",
+            "Content-Disposition": f"attachment; filename=Kinetiq_Certificate_{safe_last_name}.pdf",
             "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )

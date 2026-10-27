@@ -38,6 +38,7 @@ class CertificationCreate(CertificationBase):
 
 class Certification(CertificationBase):
     id: int
+    status: str = "available"
 
     class Config:
         from_attributes = True
@@ -163,4 +164,3 @@ class AvailableTask(BaseModel):
 
 class UserTaskCompletion(BaseModel):
     video_task_id: int
-
