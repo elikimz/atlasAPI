@@ -720,7 +720,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
                         release_at=now,
                         released_at=now,
                     ))
-                    logger.info("User %s upgraded via STK: credited $%s old plan price to withdrawal", user.id, refund_amount)
+                    logger.info("User %s upgraded via STK: credited KSh %s old plan price to withdrawal", user.id, refund_amount)
 
             # Clean up old plan's pending tasks (parity with /plans/upgrade endpoint)
             if payment.payment_type == "upgrade" and old_plan_id:

@@ -229,7 +229,7 @@ async def complete_task(
     Rule 2 — Multi-Tier Task Rebates:
       Walk up the referral chain (up to 3 tiers) and credit flat rebate amounts
       to each upline's withdrawal_wallet_balance and referral code stats.
-      Tier A: $0.01, Tier B: $0.005, Tier C: $0.0025
+      Tier A: KSh 0.01, Tier B: KSh 0.005, Tier C: KSh 0.0025
     """
     # Serialize all completions for this member on databases that support row
     # locks. The pair uniqueness constraint is the final duplicate guard.
@@ -351,7 +351,7 @@ async def complete_task(
     # ─────────────────────────────────────────────────────────────────────────
     # Rule 2: Multi-Tier Task Rebates
     # Walk up the referral chain and credit flat rebate amounts to each upline.
-    # Tier A (direct referrer): $0.01
+    # Tier A (direct referrer): KSh 0.01
     # Tier B (referrer's referrer): $0.005
     # Tier C (3rd level up): $0.0025
     # ─────────────────────────────────────────────────────────────────────────
@@ -582,7 +582,7 @@ async def _build_dashboard_summary(
             {
                 "id": uvt.id,
                 "description": f"Completed: {vt.title}",
-                "amount": f"+ ${vt.reward_amount:.2f}",
+                "amount": f"+ KSh {vt.reward_amount:.2f}",
                 "status": "Completed",
             }
             for uvt, vt in recent_uvt_result.all()

@@ -65,7 +65,7 @@ def _build_message(
             <p style="margin:0 0 16px;font-size:16px;">Dear {safe_name},</p>
             <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:#50575e;">{safe_message}</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dcdcde;background:#f6f7f7;">
-              <tr><td style="padding:14px 16px;font-size:13px;color:#646970;">Withdrawal amount</td><td align="right" style="padding:14px 16px;font-size:17px;font-weight:700;color:#1d2327;">${amount:,.2f}</td></tr>
+              <tr><td style="padding:14px 16px;font-size:13px;color:#646970;">Withdrawal amount</td><td align="right" style="padding:14px 16px;font-size:17px;font-weight:700;color:#1d2327;">KSh{amount:,.2f}</td></tr>
               <tr><td style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:13px;color:#646970;">Status</td><td align="right" style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:14px;font-weight:700;color:#{status_color};">{safe_status}</td></tr>
             </table>
             {details_block}
@@ -127,9 +127,9 @@ async def send_withdrawal_status_email(
     status_color = "008a20" if approved else "b32d2e"
     status_message = (
         f"Congratulations! Your withdrawal request has been approved and sent to your designated wallet. "
-        f"Amount: ${amount:,.2f}. Status: APPROVED."
+        f"Amount: KSh{amount:,.2f}. Status: APPROVED."
         if approved
-        else f"Your withdrawal was canceled and the amount of ${amount:,.2f} has been returned to your withdrawal wallet. Status: CANCELED."
+        else f"Your withdrawal was canceled and the amount of KSh{amount:,.2f} has been returned to your withdrawal wallet. Status: CANCELED."
     )
     message = _build_message(
         recipient=recipient,
@@ -165,7 +165,7 @@ async def send_withdrawal_request_received_email(
         status_color="2271b1",
         status_message=(
             f"We are pleased to inform you that we have successfully received your "
-            f"${amount:,.2f} withdrawal request. Your request has been recorded in our "
+            f"KSh{amount:,.2f} withdrawal request. Your request has been recorded in our "
             "system and is currently undergoing the necessary processing and verification "
             "procedures. Please allow the required processing time for the transaction to "
             "be completed. Once finalized, the funds will be released through your selected "

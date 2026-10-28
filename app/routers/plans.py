@@ -257,8 +257,8 @@ async def upgrade_plan(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"Insufficient deposit wallet balance to upgrade. "
-                f"Required: ${new_plan.price:.2f}. "
-                f"Your previous plan price (${refund_amount:.2f}) will be refunded "
+                f"Required: KSh {new_plan.price:.2f}. "
+                f"Your previous plan price (KSh {refund_amount:.2f}) will be refunded "
                 f"immediately to your withdrawal wallet."
             )
         )
@@ -428,6 +428,6 @@ async def release_pending_refunds(
         await invalidate_shared_cache("admin_stats")
 
     return {
-        "message": f"Released {len(pending_refunds)} legacy refunds totaling ${released_total:.2f}",
+        "message": f"Released {len(pending_refunds)} legacy refunds totaling KSh {released_total:.2f}",
         "released_amount": released_total
     }
