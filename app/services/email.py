@@ -40,7 +40,7 @@ def _build_message(
     ]
     if details and details.strip():
         text_lines.extend([f"Admin note: {details.strip()}"])
-    text_lines.extend(["", "Thank you,", "Kinetiq Support"])
+    text_lines.extend(["", "Thank you,", "Pacecraft Support"])
 
     details_block = (
         f'<div style="margin:20px 0;padding:14px 16px;border-left:4px solid #{status_color};'
@@ -49,14 +49,16 @@ def _build_message(
         if safe_details
         else ""
     )
+    logo_cid = make_msgid(domain="pacecraft")
+    logo_src = f"cid:{logo_cid[1:-1]}"
     html = f"""<!doctype html>
 <html lang="en">
-  <body style="margin:0;background:#F6F3EA;font-family:Arial,Helvetica,sans-serif;color:#182234;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F3EA;padding:32px 12px;">
+  <body style="margin:0;background:#F7F4EA;font-family:Arial,Helvetica,sans-serif;color:#192723;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F7F4EA;padding:32px 12px;">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fffefa;border:1px solid #d5d3cb;">
-          <tr><td style="padding:24px 28px;background:#1746e8;color:#ffffff;">
-            <div style="font-size:22px;font-weight:700;letter-spacing:.2px;">Kinetiq</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fffefa;border:1px solid #d9e1d9;">
+          <tr><td style="padding:20px 24px;background:#132f2a;color:#ffffff;">
+            <img src="{logo_src}" width="44" height="44" alt="" style="vertical-align:middle;margin-right:12px;border:0;" /><span style="font-size:22px;font-weight:700;letter-spacing:.2px;vertical-align:middle;">Pacecraft</span>
             <div style="margin-top:4px;font-size:13px;opacity:.9;">{escape(title)}</div>
           </td></tr>
           <tr><td style="padding:28px;">
@@ -67,9 +69,9 @@ def _build_message(
               <tr><td style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:13px;color:#646970;">Status</td><td align="right" style="padding:14px 16px;border-top:1px solid #dcdcde;font-size:14px;font-weight:700;color:#{status_color};">{safe_status}</td></tr>
             </table>
             {details_block}
-            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#697487;">If you did not request this, please contact Kinetiq Support.</p>
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#697487;">If you did not request this, please contact Pacecraft Support.</p>
           </td></tr>
-          <tr><td style="padding:18px 28px;border-top:1px solid #d5d3cb;font-size:12px;color:#697487;">© 2026 Kinetiq. All rights reserved.</td></tr>
+          <tr><td style="padding:18px 28px;border-top:1px solid #d5d3cb;font-size:12px;color:#697487;">© 2026 Pacecraft. All rights reserved.</td></tr>
         </table>
       </td></tr>
     </table>
@@ -82,6 +84,10 @@ def _build_message(
     message["To"] = recipient
     message.set_content("\n".join(text_lines))
     message.add_alternative(html, subtype="html")
+    html_part = message.get_body(preferencelist=("html",))
+    logo_path = Path(__file__).resolve().parent.parent / "assets" / "pacecraft-email-logo.png"
+    if html_part is not None and logo_path.is_file():
+        html_part.add_related(logo_path.read_bytes(), maintype="image", subtype="png", cid=logo_cid, disposition="inline", filename=logo_path.name)
     return message
 
 
@@ -195,48 +201,48 @@ async def send_password_reset_code_email(
     name = escape((first_name or "there").strip() or "there")
     safe_code = escape(code)
     message = EmailMessage()
-    message["Subject"] = "Your Kinetiq password reset code"
+    message["Subject"] = "Your Pacecraft password reset code"
     message["From"] = formataddr((settings.EMAIL_SENDER_NAME, settings.EMAIL_SENDER)) if settings.EMAIL_SENDER else settings.EMAIL_SENDER_NAME
     message["To"] = recipient
     message.set_content(
-        f"KINETIQ | PASSWORD RESET\n\nHello {first_name or 'there'},\n\n"
+        f"PACECRAFT | PASSWORD RESET\n\nHello {first_name or 'there'},\n\n"
         f"Your six-digit reset code is:\n\n{code}\n\n"
         "Select and copy the code above. It expires in 10 minutes and can be used only once.\n\n"
-        "If you did not request this, you can ignore this email.\n\nKinetiq Support"
+        "If you did not request this, you can ignore this email.\n\nPacecraft Support"
     )
-    logo_cid = make_msgid(domain="kinetiq")
+    logo_cid = make_msgid(domain="pacecraft")
     logo_src = f"cid:{logo_cid[1:-1]}"
     html = f"""<!doctype html>
 <html lang="en">
-  <body style="margin:0;padding:0;background-color:#F6F3EA;color:#182234;font-family:Arial,Helvetica,sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F6F3EA;padding:28px 12px;">
+  <body style="margin:0;padding:0;background-color:#F7F4EA;color:#192723;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F7F4EA;padding:28px 12px;">
       <tr><td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#fffefa;border:1px solid #d5d3cb;border-radius:18px;overflow:hidden;">
-          <tr><td align="center" style="padding:28px 24px 24px;background-color:#182234;">
-            <img src="{logo_src}" width="88" height="88" alt="Kinetiq mark" style="display:block;width:88px;height:88px;border:0;border-radius:14px;" />
-            <p style="margin:14px 0 0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.3px;">Kinetiq</p>
-            <p style="margin:5px 0 0;color:#c3d0ff;font-size:11px;font-weight:700;letter-spacing:2px;">ACCOUNT SECURITY</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#fffefa;border:1px solid #d9e1d9;border-radius:18px;overflow:hidden;">
+          <tr><td align="center" style="padding:28px 24px 24px;background-color:#132f2a;">
+            <img src="{logo_src}" width="88" height="88" alt="Pacecraft mark" style="display:block;width:88px;height:88px;border:0;border-radius:14px;" />
+            <p style="margin:14px 0 0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.3px;">Pacecraft</p>
+            <p style="margin:5px 0 0;color:#c5df55;font-size:11px;font-weight:700;letter-spacing:2px;">ACCOUNT SECURITY</p>
           </td></tr>
           <tr><td style="padding:30px 28px 20px;">
-            <h1 style="margin:0 0 12px;color:#142640;font-size:24px;line-height:1.25;">Reset your password</h1>
+            <h1 style="margin:0 0 12px;color:#192723;font-size:24px;line-height:1.25;">Reset your password</h1>
             <p style="margin:0 0 12px;color:#34445c;font-size:15px;line-height:1.6;">Hello {name},</p>
-            <p style="margin:0 0 22px;color:#435064;font-size:14px;line-height:1.65;">Use this one-time code to securely reset your Kinetiq password.</p>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef6ff;border:1px solid #cfe2fb;border-radius:14px;">
+            <p style="margin:0 0 22px;color:#435064;font-size:14px;line-height:1.65;">Use this one-time code to securely reset your Pacecraft password.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5ef;border:1px solid #d9e1d9;border-radius:14px;">
               <tr><td align="center" style="padding:22px 14px 18px;">
-                <p style="margin:0 0 10px;color:#50709a;font-size:11px;font-weight:700;letter-spacing:1.6px;">YOUR 6-DIGIT CODE</p>
-              <p style="margin:0;color:#1746e8;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:7px;line-height:1.3;">{safe_code}</p>
-                <p style="margin:12px 0 0;color:#48617e;font-size:12px;line-height:1.5;">Tap and hold the code, then choose <strong>Copy</strong>.</p>
+                <p style="margin:0 0 10px;color:#54615a;font-size:11px;font-weight:700;letter-spacing:1.6px;">YOUR 6-DIGIT CODE</p>
+              <p style="margin:0;color:#174d43;font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:7px;line-height:1.3;">{safe_code}</p>
+                <p style="margin:12px 0 0;color:#54615a;font-size:12px;line-height:1.5;">Tap and hold the code, then choose <strong>Copy</strong>.</p>
               </td></tr>
             </table>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px;">
-              <tr><td style="padding:12px 14px;background-color:#fff8e8;border-left:3px solid #f0b429;border-radius:4px;color:#735b28;font-size:13px;line-height:1.55;">
+              <tr><td style="padding:12px 14px;background-color:#f3f5e9;border-left:3px solid #c5df55;border-radius:4px;color:#54615a;font-size:13px;line-height:1.55;">
                 This code expires in <strong>10 minutes</strong> and can be used only once.
               </td></tr>
             </table>
             <p style="margin:20px 0 0;color:#718096;font-size:12px;line-height:1.6;">If you did not request a password reset, you can safely ignore this email. Your password will not change unless the code is used.</p>
           </td></tr>
-          <tr><td align="center" style="padding:18px 24px;background-color:#f7f9fc;border-top:1px solid #e7edf4;color:#7a8799;font-size:11px;line-height:1.6;">
-            Kinetiq Support<br />Automated account security message
+          <tr><td align="center" style="padding:18px 24px;background-color:#f4f5ef;border-top:1px solid #d9e1d9;color:#718078;font-size:11px;line-height:1.6;">
+            Pacecraft Support<br />Automated account security message
           </td></tr>
         </table>
       </td></tr>
@@ -245,12 +251,12 @@ async def send_password_reset_code_email(
 </html>"""
     message.add_alternative(html, subtype="html")
     html_part = message.get_body(preferencelist=("html",))
-    logo_path = Path(__file__).resolve().parent.parent / "assets" / "kinetiq-email-logo.jpg"
+    logo_path = Path(__file__).resolve().parent.parent / "assets" / "pacecraft-email-logo.png"
     if html_part is not None and logo_path.is_file():
         html_part.add_related(
             logo_path.read_bytes(),
             maintype="image",
-            subtype="jpeg",
+            subtype="png",
             cid=logo_cid,
             disposition="inline",
             filename=logo_path.name,

@@ -307,7 +307,7 @@ async def test_reset_email_uses_requested_sender_name_and_address(monkeypatch: p
         if part.get_content_maintype() == "image" and part.get_content_disposition() == "inline"
     ]
     assert len(inline_logos) == 1
-    assert inline_logos[0].get_content_type() == "image/jpeg"
+    assert inline_logos[0].get_content_type() == "image/png"
 
 
 @pytest.mark.anyio

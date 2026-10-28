@@ -162,4 +162,4 @@ app.include_router(pesaflux.router)
 
 @app.get("/")
 def root() -> dict:
-    return {"message": "Kinetiq API is running"}
+    return {"message": "Pacecraft API is running"}

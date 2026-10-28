@@ -854,7 +854,7 @@ async def get_certificate(
     pdf.set_font('Arial', 'B', 24)
     pdf.set_text_color(24, 34, 52)
     pdf.set_xy(0, 30)
-    pdf.cell(297, 10, 'Kinetiq', align='C')
+    pdf.cell(297, 10, 'Pacecraft', align='C')
 
     pdf.set_font('Arial', 'B', 40)
     pdf.set_text_color(23, 70, 232)
@@ -868,7 +868,7 @@ async def get_certificate(
 
     first = current_user.first_name or ""
     last = current_user.last_name or ""
-    user_name = f"{first} {last}".strip() or current_user.email or "Kinetiq Member"
+    user_name = f"{first} {last}".strip() or current_user.email or "Pacecraft Member"
 
     pdf.set_font('Arial', 'B', 32)
     pdf.set_text_color(24, 34, 52)
@@ -898,7 +898,7 @@ async def get_certificate(
     pdf.set_font('Arial', 'B', 12)
     pdf.set_text_color(24, 34, 52)
     pdf.set_xy(187, 170)
-    pdf.cell(50, 5, 'Kinetiq Certification Board', align='C')
+    pdf.cell(50, 5, 'Pacecraft Certification Board', align='C')
     pdf.set_font('Arial', '', 10)
     pdf.set_text_color(100, 116, 139)
     pdf.set_xy(187, 175)
@@ -937,7 +937,7 @@ async def get_certificate(
         content=pdf_output,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=Kinetiq_Certificate_{safe_last_name}.pdf",
+            "Content-Disposition": f"attachment; filename=Pacecraft_Certificate_{safe_last_name}.pdf",
             "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )
