@@ -19,6 +19,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+RECHARGE_DENOMINATIONS = {1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000}
+
 router = APIRouter(
     prefix="/pesaflux",
     tags=["pesaflux"]
@@ -114,6 +116,7 @@ class InitiateStkResponse(BaseModel):
     transaction_request_id: str = ""
     amount_kes: int
     amount_usd: float
+    amount_cash: float | None = None
     plan_name: str
     message: str
     review_payment_id: int | None = None
@@ -124,6 +127,7 @@ class PaymentStatusResponse(BaseModel):
     status: str          # pending | under_review | completed | failed
     plan_name: str | None
     amount_usd: float
+    amount_cash: float | None = None
     amount_kes: float = 0
     mpesa_receipt: str | None = None
     message: str = ""
@@ -179,6 +183,7 @@ async def initiate_stk_push(
     try:
         plan = None
         amount_usd = 0.0
+        amount_cash: float | None = None
         payment_type = "purchase"
         plan_name = "Account Recharge"
 
@@ -231,15 +236,17 @@ async def initiate_stk_push(
 
         # Case B: Pure recharge (amount-based)
         elif request_data.amount:
-            minimum_recharge_usd = 20.0
-            if request_data.amount < minimum_recharge_usd:
+            amount_cash = float(request_data.amount)
+            if amount_cash not in RECHARGE_DENOMINATIONS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Minimum deposit amount is $20.00."
+                    detail="Choose one of the available Cash deposit amounts: 1,000; 1,500; 2,000; 2,500; 3,000; 3,500; 4,000; or 5,000."
                 )
-            amount_usd = request_data.amount
+            # Keep the legacy column populated for compatibility. Recharge
+            # values are now exact cash/KES denominations, not USD values.
+            amount_usd = amount_cash
             payment_type = "recharge"
-            plan_name = f"Recharge ${amount_usd:.2f}"
+            plan_name = f"Cash deposit {amount_cash:,.0f}"
         
         else:
             raise HTTPException(
@@ -247,9 +254,13 @@ async def initiate_stk_push(
                 detail="Either plan_id or amount must be provided."
             )
 
-        # 4. Convert USD to KES
-        usd_to_kes = float(getattr(settings, "PESAFLUX_USD_TO_KES_RATE", 130))
-        amount_kes = max(1, round(amount_usd * usd_to_kes))
+        # Plan prices use the legacy plan currency conversion. Recharge
+        # denominations already represent the exact M-Pesa/KES cash amount.
+        if payment_type == "recharge":
+            amount_kes = round(amount_cash or amount_usd)
+        else:
+            usd_to_kes = float(getattr(settings, "PESAFLUX_USD_TO_KES_RATE", 130))
+            amount_kes = max(1, round(amount_usd * usd_to_kes))
 
         # 5. Generate unique reference
         plan_ref_id = plan.id if plan else "RCH"
@@ -295,6 +306,7 @@ async def initiate_stk_push(
                     "transaction_request_id": "",
                     "amount_kes": amount_kes,
                     "amount_usd": amount_usd,
+                    "amount_cash": amount_cash,
                     "plan_name": plan_name,
                     "review_payment_id": review.id,
                     "message": "Your M-Pesa deposit was submitted for manual review. An administrator will verify it before crediting your wallet.",
@@ -330,6 +342,7 @@ async def initiate_stk_push(
                 "transaction_request_id": pf_payment.transaction_request_id or "",
                 "amount_kes": amount_kes,
                 "amount_usd": amount_usd,
+                "amount_cash": amount_cash,
                 "plan_name": plan_name,
                 "message": "M-Pesa prompt sent. Enter your PIN, then confirm below to submit this deposit for review.",
             }
@@ -432,7 +445,7 @@ async def get_payment_status(
         
         msg = ""
         if payment.status == "completed":
-            msg = f"Payment of ${payment.amount_usd:.2f} via M-Pesa was successful."
+            msg = f"Cash payment of {payment.amount_usd:,.0f} via M-Pesa was successful."
         elif payment.status == "failed":
             msg = "Payment was not completed."
         
@@ -441,6 +454,7 @@ async def get_payment_status(
             "status": payment.status,
             "plan_name": plan_name,
             "amount_usd": payment.amount_usd,
+            "amount_cash": payment.amount_usd if payment.payment_type == "recharge" else None,
             "amount_kes": payment.amount,
             "mpesa_receipt": payment.mpesa_receipt,
             "message": msg,
@@ -453,6 +467,7 @@ async def get_payment_status(
             "status": "pending",
             "plan_name": None,
             "amount_usd": payment.amount_usd,
+            "amount_cash": payment.amount_usd if payment.payment_type == "recharge" else None,
             "amount_kes": payment.amount,
             "mpesa_receipt": None,
             "message": "",
@@ -491,9 +506,10 @@ async def get_payment_status(
             "status": "completed",
             "plan_name": local_plan_name,
             "amount_usd": payment.amount_usd,
+            "amount_cash": payment.amount_usd if payment.payment_type == "recharge" else None,
             "amount_kes": payment.amount,
             "mpesa_receipt": payment.mpesa_receipt,
-            "message": f"Payment of ${payment.amount_usd:.2f} via M-Pesa was successful.",
+            "message": f"Cash payment of {payment.amount_usd:,.0f} via M-Pesa was successful.",
         }
     
     # If PesaFlux says it failed
@@ -505,6 +521,7 @@ async def get_payment_status(
             "status": "failed",
             "plan_name": None,
             "amount_usd": payment.amount_usd,
+            "amount_cash": payment.amount_usd if payment.payment_type == "recharge" else None,
             "amount_kes": payment.amount,
             "mpesa_receipt": None,
             "message": "Payment was not completed.",
@@ -643,7 +660,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
     if payment.payment_type == "recharge" or not payment.plan_id:
         # PURE RECHARGE
         user.deposit_wallet_balance = (user.deposit_wallet_balance or 0.0) + payment.amount_usd
-        logger.info("User %s recharged $%s via M-Pesa", user.id, payment.amount_usd)
+        logger.info("User %s received Cash %s via M-Pesa", user.id, payment.amount_usd)
     else:
         # PLAN PURCHASE OR UPGRADE
         if payment.plan_activated == "no":

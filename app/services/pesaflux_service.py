@@ -49,7 +49,7 @@ async def initiate_stk_push(
         return {
             "success": False,
             "transaction_request_id": None,
-            "error": "M-Pesa payment is temporarily unavailable. Please try again later or use Crypto (USDT) to recharge.",
+            "error": "M-Pesa payment is temporarily unavailable. Please try again later.",
             "error_code": "config_missing"
         }
 
