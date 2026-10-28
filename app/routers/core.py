@@ -249,6 +249,26 @@ async def complete_task(
             detail="Your plan has expired. Please upgrade to a higher tier to continue earning."
         )
 
+    # Idempotency: a retry after a successful completion must not be blocked by
+    # the daily limit or create a second reward. The unique user/task pair is
+    # the durable duplicate guard; this fast path makes retries user-friendly.
+    existing_completion = await db.scalar(
+        select(models.UserVideoTask).where(
+            models.UserVideoTask.user_id == current_user.id,
+            models.UserVideoTask.video_task_id == task_completion.video_task_id,
+        ).with_for_update()
+    )
+    if existing_completion and existing_completion.status == "completed":
+        existing_task = await db.scalar(
+            select(models.VideoTask).where(models.VideoTask.id == task_completion.video_task_id)
+        )
+        return {
+            "message": "Task was already completed. No duplicate reward was created.",
+            "reward_amount": existing_task.reward_amount if existing_task else 0.0,
+            "status": "completed",
+            "already_completed": True,
+        }
+
     # 2. Check Daily Task Limit
     # Count only tasks completed today AND after the current plan was activated.
     # This ensures that tasks completed on a previous (lower-tier) plan today do
@@ -313,10 +333,12 @@ async def complete_task(
     user_video_task = uvt_result.scalar_one_or_none()
 
     if user_video_task and user_video_task.status == "completed":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Task already completed by user"
-        )
+        return {
+            "message": "Task was already completed. No duplicate reward was created.",
+            "reward_amount": video_task.reward_amount,
+            "status": "completed",
+            "already_completed": True,
+        }
 
     if user_video_task is None or user_video_task.started_at is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Start this task before submitting it.")
@@ -346,6 +368,12 @@ async def complete_task(
         amount=video_task.reward_amount,
         type="task_reward",
         description=f"Task reward: {video_task.title}"
+    ))
+    db.add(models.Notification(
+        user_id=current_user.id,
+        title="Task completed",
+        message=f"{video_task.title} was verified and {video_task.reward_amount:.2f} KSh was added to your earnings.",
+        type="success",
     ))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -433,7 +461,7 @@ async def complete_task(
 
     # Only invalidate after the transaction is durable. Each upline receives a
     # wallet and referral-code change from the same completion event.
-    await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments")
+    await invalidate_user_cache(current_user.id, "tasks", "dashboard", "referrals", "payments", "notifications")
     for referrer_id in affected_referrer_ids:
         await invalidate_user_cache(referrer_id, "dashboard", "referrals", "payments")
     await invalidate_shared_cache("admin_stats")
@@ -441,6 +469,8 @@ async def complete_task(
     return {
         "message": "Task completed successfully. Earnings credited and referral rebates distributed.",
         "reward_amount": video_task.reward_amount,
+        "status": "completed",
+        "already_completed": False,
     }
 
 

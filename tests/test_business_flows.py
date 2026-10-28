@@ -195,8 +195,9 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
     assert assigned_task.status == "completed"
 
     replay = await client.post("/tasks/complete", headers=headers, json={"video_task_id": task.id})
-    assert replay.status_code == 400
-    assert "already completed" in replay.json()["detail"].lower()
+    assert replay.status_code == 200
+    assert replay.json()["already_completed"] is True
+    assert "already completed" in replay.json()["message"].lower()
 
     await test_db.refresh(purchaser)
     await test_db.refresh(referrer)
@@ -217,6 +218,14 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
     )).scalars().all()
     assert len(task_logs) == 1
     assert task_logs[0].amount == pytest.approx(3.5)
+    notifications = (await test_db.execute(
+        select(models.Notification).where(
+            models.Notification.user_id == purchaser.id,
+            models.Notification.type == "success",
+        )
+    )).scalars().all()
+    assert len(notifications) == 1
+    assert "3.50" in notifications[0].message
 
 
 @pytest.mark.anyio
