@@ -570,6 +570,11 @@ async def test_global_notification_read_and_dismiss_are_member_scoped(
     first_initial = await client.get("/notifications", headers=first_headers)
     second_initial = await client.get("/notifications", headers=second_headers)
     assert first_initial.status_code == second_initial.status_code == 200
+    assert first_initial.headers["X-Total-Count"] == "1"
+    first_summary = await client.get("/notifications/summary", headers=first_headers)
+    assert first_summary.status_code == 200
+    assert first_summary.json()["unread_count"] == 1
+    assert first_summary.json()["total_count"] == 1
     assert first_initial.json()[0]["is_read"] is False
     assert second_initial.json()[0]["is_read"] is False
 
@@ -583,6 +588,10 @@ async def test_global_notification_read_and_dismiss_are_member_scoped(
     second_unread = await client.get("/notifications", headers=second_headers)
     assert first_read.json()[0]["is_read"] is True
     assert second_unread.json()[0]["is_read"] is False
+    first_summary_after_read = await client.get("/notifications/summary", headers=first_headers)
+    second_summary = await client.get("/notifications/summary", headers=second_headers)
+    assert first_summary_after_read.json()["unread_count"] == 0
+    assert second_summary.json()["unread_count"] == 1
 
     dismissed = await client.delete(f"/notifications/{global_notice.id}", headers=first_headers)
     assert dismissed.status_code == 200
@@ -594,6 +603,34 @@ async def test_global_notification_read_and_dismiss_are_member_scoped(
     await test_db.refresh(global_notice)
     assert global_notice.user_id is None
     assert global_notice.is_read is False
+
+
+@pytest.mark.anyio
+async def test_notification_summary_and_mark_all_read_cover_personal_and_global_items(
+    client: AsyncClient, test_db: AsyncSession
+) -> None:
+    user = models.User(username="notice_summary", password_hash=get_password_hash(TEST_PASSWORD))
+    global_notice = models.Notification(user_id=None, title="Global", message="Global update", type="warning")
+    personal_notice = models.Notification(title="Personal", message="Personal update", type="success")
+    test_db.add_all([user, global_notice, personal_notice])
+    await test_db.flush()
+    personal_notice.user_id = user.id
+    await test_db.commit()
+    headers = await login_header(client, user.username)
+
+    summary = await client.get("/notifications/summary", headers=headers)
+    assert summary.status_code == 200
+    assert summary.json()["unread_count"] == 2
+    assert summary.json()["total_count"] == 2
+
+    marked = await client.post("/notifications/mark-all-read", headers=headers)
+    assert marked.status_code == 200
+    assert marked.json()["updated"] == 2
+    after = await client.get("/notifications/summary", headers=headers)
+    assert after.json()["unread_count"] == 0
+    feed = await client.get("/notifications?page=1&limit=1", headers=headers)
+    assert feed.status_code == 200
+    assert feed.headers["X-Has-More"] == "true"
 
 
 @pytest.mark.anyio

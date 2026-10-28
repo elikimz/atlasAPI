@@ -44,7 +44,7 @@ class CacheTTL:
     DASHBOARD = 30
     REFERRALS = 5 * 60
     PAYMENTS = 60
-    NOTIFICATIONS = 20
+    NOTIFICATIONS = 15
     ADMIN_STATS = 30
 
 
@@ -102,6 +102,10 @@ class CacheKeys:
     @classmethod
     def user_notifications(cls, user_id: int, page: int, limit: int) -> str:
         return f"{cls.user_prefix(user_id)}:notifications:{page}:{limit}"
+
+    @classmethod
+    def user_notification_summary(cls, user_id: int) -> str:
+        return f"{cls.user_prefix(user_id)}:notifications:summary"
 
 
 class CacheService:
@@ -303,6 +307,11 @@ async def invalidate_user_cache(user_id: int, *groups: str) -> None:
     patterns = [group_patterns[group] for group in groups if group in group_patterns]
     for pattern in patterns:
         await cache.delete_pattern(pattern)
+
+
+async def invalidate_all_notification_cache() -> None:
+    """Invalidate every member's notification feed and badge summary."""
+    await cache.delete_pattern("adpulseai:user:*:notifications:*")
 
 
 async def invalidate_shared_cache(*groups: str) -> None:
