@@ -31,7 +31,7 @@ def _is_weekday_only_plan(plan: models.Plan | None) -> bool:
 def _tasks_available_today(plan: models.Plan | None) -> bool:
     return not _is_weekday_only_plan(plan) or datetime.now(timezone.utc).weekday() < 6
 
-TASK_SESSION_MIN_SECONDS = 20
+TASK_SESSION_MIN_SECONDS = 10
 
 
 def _task_filter_for_plan(plan: models.Plan | None, plan_id: int | None):

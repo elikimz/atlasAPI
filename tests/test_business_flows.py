@@ -169,7 +169,7 @@ async def test_purchase_assigns_task_credits_referrer_and_rewards_completion(
 
     started = await client.post(f"/tasks/{task.id}/start", headers=headers)
     assert started.status_code == 200, started.text
-    assert started.json()["required_session_seconds"] == 20
+    assert started.json()["required_session_seconds"] == 10
     started_again = await client.post(f"/tasks/{task.id}/start", headers=headers)
     assert started_again.status_code == 200
     assert started_again.json()["started_at"] == started.json()["started_at"]
