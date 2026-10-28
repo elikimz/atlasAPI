@@ -527,11 +527,11 @@ class PaymentHistorySchema(BaseModel):
         orm_mode = True
 
 class PaymentMethodUpdate(BaseModel):
-    type: str # crypto, wise
+    type: str
     details: dict
 
 class DepositRequestSchema(BaseModel):
-    amount: float = Field(..., ge=3.0, description="Minimum crypto deposit amount in USD")
+    amount: float = Field(..., ge=20.0, description="Minimum M-Pesa cash deposit amount")
     payment_method: str
     network: str
     proof_url: str
@@ -623,8 +623,9 @@ async def update_payment_method(
     method_data: PaymentMethodUpdate,
     current_user: models.User = Depends(get_current_user)
 ):
-    # In a real app, you'd save this to a PaymentMethod table
-    return {"message": "Payment method updated successfully"}
+    if method_data.type.strip().lower() not in {"mpesa", "m-pesa", "m_pesa"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only M-Pesa is supported.")
+    return {"message": "M-Pesa payment method updated successfully", "type": "mpesa"}
 
 @router.post("/payments/deposit", response_model=dict)
 async def create_deposit_request(
@@ -634,17 +635,15 @@ async def create_deposit_request(
 ):
     try:
         payment_method = deposit_data.payment_method.strip().lower()
-        is_crypto = payment_method in {"crypto", "usdt"}
-        if is_crypto and deposit_data.network.strip().upper() != "BEP20":
+        if payment_method not in {"mpesa", "m-pesa", "m_pesa"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Only BEP20 is supported for crypto deposits.",
+                detail="Only M-Pesa deposits are supported.",
             )
-        minimum_amount = 3.0 if is_crypto else 20.0
-        if deposit_data.amount < minimum_amount:
+        if deposit_data.network.strip().lower() not in {"mpesa", "m-pesa", "m_pesa", "stk push"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Minimum {deposit_data.payment_method} deposit amount is ${minimum_amount:.2f}.",
+                detail="M-Pesa is the only supported deposit route.",
             )
         new_payment = models.Payment(
             user_id=current_user.id,
@@ -652,8 +651,8 @@ async def create_deposit_request(
             period=datetime.now(timezone.utc).strftime("%b %Y"),
             status="pending",
             type="deposit",
-            payment_method=deposit_data.payment_method,
-            network=deposit_data.network,
+            payment_method="M-Pesa",
+            network="M-Pesa",
             proof_url=deposit_data.proof_url
         )
         db.add(new_payment)
@@ -730,7 +729,10 @@ async def get_withdrawal_accounts(
     db: AsyncSession = Depends(get_async_db)
 ):
     result = await db.execute(
-        select(models.WithdrawalAccount).filter(models.WithdrawalAccount.user_id == current_user.id)
+        select(models.WithdrawalAccount).filter(
+            models.WithdrawalAccount.user_id == current_user.id,
+            func.lower(models.WithdrawalAccount.type).in_(["mpesa", "m-pesa", "m_pesa"]),
+        )
     )
     return result.scalars().all()
 
@@ -740,10 +742,11 @@ async def add_withdrawal_account(
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    if account_data.type.strip().lower() == "crypto" and (account_data.network or "").strip().upper() != "BEP20":
+    account_type = account_data.type.strip().lower()
+    if account_type not in {"mpesa", "m-pesa", "m_pesa"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only BEP20 is supported for crypto withdrawal accounts.",
+            detail="Only M-Pesa withdrawal accounts are supported.",
         )
     # If this is primary, unset other primary accounts
     if account_data.is_primary:
@@ -753,10 +756,9 @@ async def add_withdrawal_account(
             .values(is_primary=False)
         )
     
-    new_account = models.WithdrawalAccount(
-        user_id=current_user.id,
-        **account_data.dict()
-    )
+    account_values = account_data.model_dump()
+    account_values.update({"type": "mpesa", "label": account_data.label or "M-Pesa Account", "network": "M-Pesa"})
+    new_account = models.WithdrawalAccount(user_id=current_user.id, **account_values)
     db.add(new_account)
     await db.commit()
     await db.refresh(new_account)
@@ -880,15 +882,10 @@ async def request_withdrawal(
     account = result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Withdrawal account not found")
-    if account.type.strip().lower() == "crypto" and (account.network or "").strip().upper() != "BEP20":
+    if account.type.strip().lower() not in {"mpesa", "m-pesa", "m_pesa"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only BEP20 is supported for crypto withdrawals.",
-        )
-    if account.type.strip().lower() == "crypto" and withdrawal_data.amount < 3.0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Minimum crypto withdrawal amount is $3.00.",
+            detail="Only M-Pesa withdrawals are supported.",
         )
     
     # 4. Create payment record
@@ -899,8 +896,8 @@ async def request_withdrawal(
             period=datetime.now(timezone.utc).strftime("%b %Y"),
             status="pending",
             type="payout",
-            payment_method=f"{account.type.upper()} ({account.network})",
-            network=account.network,
+            payment_method="M-Pesa",
+            network="M-Pesa",
             admin_notes=f"Withdrawal to {account.address}",
             destination_number=account.address
         )

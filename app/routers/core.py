@@ -1,10 +1,11 @@
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
+import logging
 import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fpdf import FPDF
@@ -16,6 +17,7 @@ from app.schemas import AvailableTask, UserTaskCompletion, Certification as Cert
 from app.services.cache import CacheKeys, CacheTTL, cache, invalidate_shared_cache, invalidate_user_cache
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _is_intern_plan(plan: models.Plan | None) -> bool:
@@ -306,7 +308,7 @@ async def complete_task(
         select(models.UserVideoTask).filter(
             models.UserVideoTask.user_id == current_user.id,
             models.UserVideoTask.video_task_id == task_completion.video_task_id
-        )
+        ).with_for_update()
     )
     user_video_task = uvt_result.scalar_one_or_none()
 
@@ -325,20 +327,8 @@ async def complete_task(
         remaining = max(1, int(TASK_SESSION_MIN_SECONDS - elapsed_seconds + 0.999))
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Task session is still in progress. Wait {remaining} more seconds before submitting.")
 
-    # Claim the pending task with a conditional UPDATE before writing any money.
-    # This is the replay/concurrency guard where row locks are unsupported.
-    claim_result = await db.execute(
-        update(models.UserVideoTask)
-        .where(
-            models.UserVideoTask.id == user_video_task.id,
-            models.UserVideoTask.user_id == current_user.id,
-            models.UserVideoTask.status == "pending",
-            models.UserVideoTask.started_at <= now - timedelta(seconds=TASK_SESSION_MIN_SECONDS),
-        )
-        .values(status="completed", completed_at=now)
-    )
-    if claim_result.rowcount != 1:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task session was already submitted or is not ready.")
+    # The task row is locked above, so update the ORM row in the same transaction.
+    # This avoids relying on dialect-specific rowcount behavior from a bulk UPDATE.
     user_video_task.status = "completed"
     user_video_task.completed_at = now
 
@@ -427,9 +417,19 @@ async def complete_task(
         else:
             break
 
-    await db.commit()
-    await db.refresh(current_user)
-    await db.refresh(user_video_task)
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.exception(
+            "task_completion_failed user_id=%s task_id=%s",
+            current_user.id,
+            task_completion.video_task_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Task completion could not be saved. No reward was credited; please retry.",
+        ) from exc
 
     # Only invalidate after the transaction is durable. Each upline receives a
     # wallet and referral-code change from the same completion event.

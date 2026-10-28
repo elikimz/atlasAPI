@@ -447,60 +447,61 @@ async def test_invite_flow_registers_and_lists_three_referral_tiers(
     assert summary_data["active_invites"] == 0
 
 @pytest.mark.anyio
-async def test_crypto_minimum_is_three_but_other_deposits_remain_twenty(
+async def test_only_mpesa_cash_deposits_are_accepted(
     client: AsyncClient, purchase_scenario: dict[str, models.User]
 ) -> None:
     headers = await login_header(client, purchase_scenario["purchaser"].username)
+    mpesa = await client.post(
+        "/payments/deposit",
+        headers=headers,
+        json={"amount": 20, "payment_method": "M-Pesa", "network": "M-Pesa", "proof_url": "https://example.test/proof"},
+    )
+    assert mpesa.status_code == 200, mpesa.text
+
     crypto = await client.post(
         "/payments/deposit",
         headers=headers,
-        json={"amount": 3, "payment_method": "USDT", "network": "BEP20", "proof_url": "https://example.test/proof"},
+        json={"amount": 20, "payment_method": "USDT", "network": "BEP20", "proof_url": "https://example.test/proof"},
     )
-    assert crypto.status_code == 200, crypto.text
-
-    below_crypto_minimum = await client.post(
-        "/payments/deposit",
-        headers=headers,
-        json={"amount": 2.99, "payment_method": "USDT", "network": "BEP20", "proof_url": "https://example.test/proof"},
-    )
-    assert below_crypto_minimum.status_code == 422
+    assert crypto.status_code == 422
 
     unsupported_network = await client.post(
         "/payments/deposit",
         headers=headers,
-        json={"amount": 3, "payment_method": "USDT", "network": "ERC20", "proof_url": "https://example.test/proof"},
+        json={"amount": 20, "payment_method": "M-Pesa", "network": "BEP20", "proof_url": "https://example.test/proof"},
     )
     assert unsupported_network.status_code == 422
 
-    below_other_minimum = await client.post(
+    below_minimum = await client.post(
         "/payments/deposit",
         headers=headers,
-        json={"amount": 19.99, "payment_method": "Wise", "network": "Wise", "proof_url": "https://example.test/proof"},
+        json={"amount": 19.99, "payment_method": "M-Pesa", "network": "M-Pesa", "proof_url": "https://example.test/proof"},
     )
-    assert below_other_minimum.status_code == 422
+    assert below_minimum.status_code == 422
 
 @pytest.mark.anyio
-async def test_crypto_withdrawal_accounts_accept_only_bep20(
+async def test_withdrawal_accounts_are_mpesa_only(
     client: AsyncClient, purchase_scenario: dict[str, models.User]
 ) -> None:
     headers = await login_header(client, purchase_scenario["purchaser"].username)
     valid = await client.post(
         "/withdrawal-accounts",
         headers=headers,
-        json={"type": "crypto", "label": "Crypto Wallet", "address": "0x1234567890abcdef1234567890abcdef12345678", "network": "BEP20", "is_primary": True},
+        json={"type": "mpesa", "label": "M-Pesa Account", "address": "+254700000010", "network": "M-Pesa", "full_name": "Flow Payer", "is_primary": True},
     )
     assert valid.status_code == 200, valid.text
-    assert valid.json()["network"] == "BEP20"
+    assert valid.json()["type"] == "mpesa"
+    assert valid.json()["network"] == "M-Pesa"
 
     invalid = await client.post(
         "/withdrawal-accounts",
         headers=headers,
-        json={"type": "crypto", "label": "Old Wallet", "address": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "network": "ERC20", "is_primary": False},
+        json={"type": "crypto", "label": "Old Wallet", "address": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", "network": "BEP20", "is_primary": False},
     )
     assert invalid.status_code == 422
 
 @pytest.mark.anyio
-async def test_crypto_withdrawal_minimum_is_three_dollars(
+async def test_legacy_crypto_withdrawal_accounts_are_rejected(
     client: AsyncClient, test_db: AsyncSession, purchase_scenario: dict[str, models.User]
 ) -> None:
     purchaser = purchase_scenario["purchaser"]
@@ -517,14 +518,8 @@ async def test_crypto_withdrawal_minimum_is_three_dollars(
         headers=headers,
         json={"type": "crypto", "label": "Crypto Wallet", "address": "0x1234567890abcdef1234567890abcdef12345678", "network": "BEP20", "is_primary": True},
     )
-    assert account.status_code == 200, account.text
-    withdrawal = await client.post(
-        "/payments/withdraw",
-        headers=headers,
-        json={"amount": 2.99, "account_id": account.json()["id"], "password": "1234"},
-    )
-    assert withdrawal.status_code == 422
-    assert "minimum crypto withdrawal" in withdrawal.json()["detail"].lower()
+    assert account.status_code == 422
+    assert "m-pesa" in account.json()["detail"].lower()
 
 @pytest.mark.anyio
 async def test_admin_can_reset_user_withdrawal_password(
