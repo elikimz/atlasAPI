@@ -240,13 +240,13 @@ async def initiate_stk_push(
             if amount_cash not in RECHARGE_DENOMINATIONS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Choose one of the available Cash deposit amounts: 1,000; 1,500; 2,000; 2,500; 3,000; 3,500; 4,000; or 5,000."
+                    detail="Choose one of the available KSh deposit amounts: 1,000; 1,500; 2,000; 2,500; 3,000; 3,500; 4,000; or 5,000."
                 )
             # Keep the legacy column populated for compatibility. Recharge
             # values are now exact cash/KES denominations, not USD values.
             amount_usd = amount_cash
             payment_type = "recharge"
-            plan_name = f"Cash deposit {amount_cash:,.0f}"
+            plan_name = f"KSh deposit {amount_cash:,.0f}"
         
         else:
             raise HTTPException(
@@ -255,7 +255,7 @@ async def initiate_stk_push(
             )
 
         # Plan prices use the legacy plan currency conversion. Recharge
-        # denominations already represent the exact M-Pesa/KES cash amount.
+        # denominations already represent the exact M-Pesa/KES KSh amount.
         if payment_type == "recharge":
             amount_kes = round(amount_cash or amount_usd)
         else:
@@ -445,7 +445,7 @@ async def get_payment_status(
         
         msg = ""
         if payment.status == "completed":
-            msg = f"Cash payment of {payment.amount_usd:,.0f} via M-Pesa was successful."
+            msg = f"KSh payment of {payment.amount_usd:,.0f} via M-Pesa was successful."
         elif payment.status == "failed":
             msg = "Payment was not completed."
         
@@ -509,7 +509,7 @@ async def get_payment_status(
             "amount_cash": payment.amount_usd if payment.payment_type == "recharge" else None,
             "amount_kes": payment.amount,
             "mpesa_receipt": payment.mpesa_receipt,
-            "message": f"Cash payment of {payment.amount_usd:,.0f} via M-Pesa was successful.",
+            "message": f"KSh payment of {payment.amount_usd:,.0f} via M-Pesa was successful.",
         }
     
     # If PesaFlux says it failed
@@ -660,7 +660,7 @@ async def _process_successful_payment(payment: PesaFluxPayment, db: AsyncSession
     if payment.payment_type == "recharge" or not payment.plan_id:
         # PURE RECHARGE
         user.deposit_wallet_balance = (user.deposit_wallet_balance or 0.0) + payment.amount_usd
-        logger.info("User %s received Cash %s via M-Pesa", user.id, payment.amount_usd)
+        logger.info("User %s received KSh %s via M-Pesa", user.id, payment.amount_usd)
     else:
         # PLAN PURCHASE OR UPGRADE
         if payment.plan_activated == "no":
